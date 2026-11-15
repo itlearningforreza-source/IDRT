@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: idrc-api
+  namespace: idrc
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: idrc-oracle
+  namespace: idrc
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: idrc-bridge
+  namespace: idrc
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: idrc-indexer
+  namespace: idrc
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: idrc-prometheus
+  namespace: idrc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: idrc-api-role
+  namespace: idrc
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: idrc-api-binding
+  namespace: idrc
+subjects:
+  - kind: ServiceAccount
+    name: idrc-api
+    namespace: idrc
+roleRef:
+  kind: Role
+  name: idrc-api-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: idrc-prometheus-role
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/metrics", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: idrc-prometheus-binding
+subjects:
+  - kind: ServiceAccount
+    name: idrc-prometheus
+    namespace: idrc
+roleRef:
+  kind: ClusterRole
+  name: idrc-prometheus-role
+  apiGroup: rbac.authorization.k8s.io

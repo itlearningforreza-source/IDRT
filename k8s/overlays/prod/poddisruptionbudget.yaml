@@ -1,0 +1,43 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: idrc-api-pdb
+  namespace: idrc
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: prod-idrc-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: idrc-bridge-pdb
+  namespace: idrc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: prod-idrc-bridge
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: idrc-oracle-pdb
+  namespace: idrc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: prod-idrc-oracle
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: idrc-indexer-pdb
+  namespace: idrc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: prod-idrc-indexer

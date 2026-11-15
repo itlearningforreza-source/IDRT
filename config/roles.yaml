@@ -1,0 +1,114 @@
+# IDRC Role Configuration
+# Defines role assignments for each network deployment
+
+roles:
+  # Default Admin Role - Super admin that can grant/revoke all other roles
+  DEFAULT_ADMIN_ROLE:
+    description: "Super admin role - can manage all other roles"
+    initial_holders: ["multisig"]
+    description_per_network: {}
+
+  # Minter Role - Can mint new IDRC tokens (when fiat is deposited)
+  MINTER_ROLE:
+    description: "Mint new IDRC tokens against fiat deposits"
+    initial_holders: ["multisig"]
+    description_per_network: {}
+
+  # Burner Role - Can burn IDRC tokens (when fiat is redeemed)
+  BURNER_ROLE:
+    description: "Burn IDRC tokens when fiat is redeemed"
+    initial_holders: ["multisig"]
+    description_per_network: {}
+
+  # Pauser Role - Can pause/unpause token transfers (emergency)
+  PAUSER_ROLE:
+    description: "Emergency pause/unpause all token transfers"
+    initial_holders: ["multisig"]
+    description_per_network: {}
+
+  # Upgrader Role - Can authorize contract upgrades
+  UPGRADER_ROLE:
+    description: "Authorize UUPS proxy implementation upgrades"
+    initial_holders: ["multisig"]
+    description_per_network: {}
+
+  # Blacklister Role - Can blacklist/unblacklist addresses
+  BLACKLISTER_ROLE:
+    description: "Freeze/unfreeze addresses (sanctions compliance)"
+    initial_holders: ["multisig"]
+    description_per_network: {}
+
+  # Oracle Role - Can update fiat balance in ProofOfReserve
+  ORACLE_ROLE:
+    description: "Push fiat balance updates from bank custodian"
+    initial_holders: ["oracle_service"]
+    description_per_network: {}
+
+  # Auditor Role - Can submit audit proof hashes
+  AUDITOR_ROLE:
+    description: "Submit SHA-256 hashes of audit reports"
+    initial_holders: ["multisig", "external_auditor"]
+    description_per_network: {}
+
+  # Relayer Role - Can lock/release tokens in BridgeVault
+  RELAYER_ROLE:
+    description: "Process cross-chain bridge messages"
+    initial_holders: ["bridge_relayer"]
+    description_per_network: {}
+
+  # Relayer Admin Role - Can manage BridgeRelayer contract
+  RELAYER_ADMIN_ROLE:
+    description: "Administer bridge relayer (update relayer address, pause)"
+    initial_holders: ["multisig"]
+    description_per_network: {}
+
+# Network-specific role overrides
+network_overrides:
+  sepolia:
+    DEFAULT_ADMIN_ROLE:
+      initial_holders: ["deployer", "multisig"]
+    ORACLE_ROLE:
+      initial_holders: ["oracle_service", "deployer"] # Allow deployer for testing
+
+  mainnet:
+    # Production: strict separation of duties
+    DEFAULT_ADMIN_ROLE:
+      initial_holders: ["multisig"]
+    MINTER_ROLE:
+      initial_holders: ["multisig"]
+    ORACLE_ROLE:
+      initial_holders: ["oracle_service"] # Only dedicated oracle service
+
+# Role hierarchy (which role can manage which)
+role_hierarchy:
+  DEFAULT_ADMIN_ROLE: ["*"] # Can manage all roles
+  UPGRADER_ROLE: [] # Cannot manage other roles
+  MINTER_ROLE: []
+  BURNER_ROLE: []
+  PAUSER_ROLE: []
+  BLACKLISTER_ROLE: []
+  ORACLE_ROLE: []
+  AUDITOR_ROLE: []
+  RELAYER_ROLE: []
+  RELAYER_ADMIN_ROLE: []
+
+# Timelock configuration for sensitive operations
+timelocks:
+  role_grant: 0 # No timelock for role grants (multisig approves)
+  role_revoke: 0
+  upgrade: 48 hours # 48-hour timelock for upgrades
+  pause: 0 # Immediate pause for emergencies
+  blacklist: 0 # Immediate blacklist for sanctions
+  supply_cap_change: 24 hours
+  oracle_change: 24 hours
+  relayer_change: 24 hours
+
+# Emergency contacts (for incident response)
+emergency_contacts:
+  security_team: "security@idrc.io"
+  legal_team: "legal@idrc.io"
+  compliance_team: "compliance@idrc.io"
+  on_call_rotation:
+    - "alice@idrc.io"
+    - "bob@idrc.io"
+    - "carol@idrc.io"

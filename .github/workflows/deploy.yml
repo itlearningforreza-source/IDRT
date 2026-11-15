@@ -1,0 +1,257 @@
+name: Deploy to Testnet/Mainnet
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - sepolia
+          - amoy
+          - arbitrum-sepolia
+          - optimism-sepolia
+          - base-sepolia
+          - mainnet
+          - polygon
+          - arbitrum
+          - optimism
+          - base
+      verify:
+        description: 'Verify contracts on Etherscan'
+        required: false
+        type: boolean
+        default: true
+
+  push:
+    tags:
+      - 'v*'
+
+env:
+  FOUNDRY_VERSION: nightly
+  SOLC_VERSION: 0.8.24
+
+jobs:
+  # ===========================================
+  # PRE-DEPLOY CHECKS
+  # ===========================================
+  pre-deploy:
+    name: Pre-deploy Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Install dependencies
+        run: forge install
+
+      - name: Compile
+        run: forge build --sizes
+
+      - name: Run all tests
+        run: forge test -vvv
+
+      - name: Run fuzz tests
+        run: forge test --fuzz-runs 5000
+
+      - name: Check formatting
+        run: forge fmt --check
+
+  # ===========================================
+  # DEPLOY TO TESTNET
+  # ===========================================
+  deploy-testnet:
+    name: Deploy to Testnet
+    runs-on: ubuntu-latest
+    needs: pre-deploy
+    if: github.event.inputs.environment != 'mainnet' && github.event.inputs.environment != 'polygon' && github.event.inputs.environment != 'arbitrum' && github.event.inputs.environment != 'optimism' && github.event.inputs.environment != 'base'
+    environment: testnet
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Install dependencies
+        run: forge install
+
+      - name: Deploy to ${{ github.event.inputs.environment }}
+        id: deploy
+        run: |
+          # Load environment variables
+          source .env.${{ github.event.inputs.environment }}
+
+          # Run deployment script
+          forge script script/DeployIDRC.s.sol \
+            --rpc-url ${{ vars.RPC_URL }} \
+            --private-key ${{ secrets.DEPLOYER_PRIVATE_KEY }} \
+            --broadcast \
+            --verify \
+            --etherscan-api-key ${{ secrets.ETHERSCAN_API_KEY }} \
+            -vvvv
+
+      - name: Save deployment addresses
+        run: |
+          # Extract addresses from broadcast logs
+          echo "DEPLOYMENT_ADDRESSES<<EOF" >> $GITHUB_ENV
+          cat broadcast/${{ github.event.inputs.environment }}/latest/*.json | jq -r '.transactions[] | select(.contractName != null) | "\(.contractName)=\(.contractAddress)"' >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Update environment file
+        run: |
+          # Create updated env file with deployed addresses
+          cat > .env.${{ github.event.inputs.environment }}.deployed << EOF
+          # Deployed on $(date)
+          ${{ env.DEPLOYMENT_ADDRESSES }}
+          EOF
+
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ github.event.inputs.environment }}
+          path: |
+            broadcast/${{ github.event.inputs.environment }}/
+            .env.${{ github.event.inputs.environment }}.deployed
+          retention-days: 90
+
+      - name: Notify deployment
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+              -H 'Content-type: application/json' \
+              --data "{\"text\":\"✅ Deployment to ${{ github.event.inputs.environment }} successful!\"}"
+          else
+            curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+              -H 'Content-type: application/json' \
+              --data "{\"text\":\"❌ Deployment to ${{ github.event.inputs.environment }} failed!\"}"
+          fi
+
+  # ===========================================
+  # DEPLOY TO MAINNET
+  # ===========================================
+  deploy-mainnet:
+    name: Deploy to Mainnet
+    runs-on: ubuntu-latest
+    needs: pre-deploy
+    if: github.event.inputs.environment == 'mainnet' || github.event.inputs.environment == 'polygon' || github.event.inputs.environment == 'arbitrum' || github.event.inputs.environment == 'optimism' || github.event.inputs.environment == 'base'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Install dependencies
+        run: forge install
+
+      - name: Deploy to ${{ github.event.inputs.environment }}
+        id: deploy
+        run: |
+          # Load environment variables
+          source .env.${{ github.event.inputs.environment }}
+
+          # Run deployment script with extra safety checks
+          forge script script/DeployIDRC.s.sol \
+            --rpc-url ${{ vars.RPC_URL }} \
+            --private-key ${{ secrets.DEPLOYER_PRIVATE_KEY }} \
+            --broadcast \
+            --verify \
+            --etherscan-api-key ${{ secrets.ETHERSCAN_API_KEY }} \
+            --slow \
+            -vvvv
+
+      - name: Save deployment addresses
+        run: |
+          echo "DEPLOYMENT_ADDRESSES<<EOF" >> $GITHUB_ENV
+          cat broadcast/${{ github.event.inputs.environment }}/latest/*.json | jq -r '.transactions[] | select(.contractName != null) | "\(.contractName)=\(.contractAddress)"' >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Create deployment record
+        run: |
+          cat > deployment-record-${{ github.event.inputs.environment }}-${{ github.sha }}.json << EOF
+          {
+            "network": "${{ github.event.inputs.environment }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "commit": "${{ github.sha }}",
+            "deployer": "${{ github.actor }}",
+            "addresses": {
+              ${{ env.DEPLOYMENT_ADDRESSES }}
+            }
+          }
+          EOF
+
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ github.event.inputs.environment }}-${{ github.sha }}
+          path: |
+            broadcast/${{ github.event.inputs.environment }}/
+            deployment-record-${{ github.event.inputs.environment }}-${{ github.sha }}.json
+          retention-days: 365
+
+      - name: Notify deployment
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+              -H 'Content-type: application/json' \
+              --data "{\"text\":\"✅ Mainnet deployment to ${{ github.event.inputs.environment }} successful!\"}"
+            curl -X POST ${{ secrets.PAGERDUTY_WEBHOOK }} \
+              -H 'Content-type: application/json' \
+              --data "{\"summary\":\"IDRC deployed to ${{ github.event.inputs.environment }}\",\"severity\":\"info\",\"source\":\"github-actions\"}"
+          else
+            curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+              -H 'Content-type: application/json' \
+              --data "{\"text\":\"❌ Mainnet deployment to ${{ github.event.inputs.environment }} failed!\"}"
+            curl -X POST ${{ secrets.PAGERDUTY_WEBHOOK }} \
+              -H 'Content-type: application/json' \
+              --data "{\"summary\":\"IDRC mainnet deployment failed\",\"severity\":\"critical\",\"source\":\"github-actions\"}"
+          fi
+
+  # ===========================================
+  # POST-DEPLOY VERIFICATION
+  # ===========================================
+  post-deploy:
+    name: Post-deploy Verification
+    runs-on: ubuntu-latest
+    needs: [deploy-testnet, deploy-mainnet]
+    if: always() && (needs.deploy-testnet.result == 'success' || needs.deploy-mainnet.result == 'success')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Verify contract functionality
+        run: |
+          # Run verification script against deployed contracts
+          forge script script/VerifyDeployment.s.sol \
+            --rpc-url ${{ vars.RPC_URL }} \
+            -vvv
+
+      - name: Run integration tests
+        run: |
+          # Run integration tests against live deployment
+          forge test --match-contract IntegrationTest -vvv
+
+      - name: Notify verification complete
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK }} \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\"✅ Post-deploy verification complete for ${{ github.event.inputs.environment }}\"}"

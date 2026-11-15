@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "idrc"
+version = "1.0.0"
+description = "IDR Coin (IDRC) Python Simulation & Smart Contract Infrastructure"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "IDRC Development Team"}
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "mypy>=1.0",
+    "ruff>=0.1.0"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

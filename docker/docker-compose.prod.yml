@@ -1,0 +1,320 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (Production)
+  postgres:
+    image: postgres:16-alpine
+    container_name: idrc-postgres-prod
+    environment:
+      POSTGRES_DB: idrc
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    networks:
+      - idrc-network
+    restart: always
+
+  # Redis (Production)
+  redis:
+    image: redis:7-alpine
+    container_name: idrc-redis-prod
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - idrc-network
+    restart: always
+
+  # API Service (Production - multiple replicas)
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: idrc-api-prod
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/idrc
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - SEPOLIA_RPC_URL=${SEPOLIA_RPC_URL}
+      - MAINNET_RPC_URL=${MAINNET_RPC_URL}
+      - POLYGON_RPC_URL=${POLYGON_RPC_URL}
+      - ARBITRUM_RPC_URL=${ARBITRUM_RPC_URL}
+      - OPTIMISM_RPC_URL=${OPTIMISM_RPC_URL}
+      - BASE_RPC_URL=${BASE_RPC_URL}
+      - LOG_LEVEL=warning
+      - WORKERS=8
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+    networks:
+      - idrc-network
+    restart: always
+
+  # Oracle Relayer (Production)
+  oracle:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.oracle
+    container_name: idrc-oracle-prod
+    environment:
+      - CHAIN_ID=1
+      - RPC_URL=${MAINNET_RPC_URL}
+      - RESERVE_ADDRESS=${MAINNET_RESERVE_ADDRESS}
+      - ORACLE_PRIVATE_KEY=${ORACLE_PRIVATE_KEY}
+      - POLL_INTERVAL=900
+      - BANK_API_URL=${BANK_API_URL}
+      - BANK_API_KEY=${BANK_API_KEY}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    networks:
+      - idrc-network
+    restart: always
+
+  # Bridge Relayer (Production)
+  bridge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.bridge
+    container_name: idrc-bridge-prod
+    environment:
+      - MAINNET_RPC_URL=${MAINNET_RPC_URL}
+      - POLYGON_RPC_URL=${POLYGON_RPC_URL}
+      - ARBITRUM_RPC_URL=${ARBITRUM_RPC_URL}
+      - OPTIMISM_RPC_URL=${OPTIMISM_RPC_URL}
+      - BASE_RPC_URL=${BASE_RPC_URL}
+      - MAINNET_VAULT_ADDRESS=${MAINNET_VAULT_ADDRESS}
+      - MAINNET_RELAYER_ADDRESS=${MAINNET_RELAYER_ADDRESS}
+      - MAINNET_TOKEN_ADDRESS=${MAINNET_TOKEN_ADDRESS}
+      - POLYGON_VAULT_ADDRESS=${POLYGON_VAULT_ADDRESS}
+      - POLYGON_RELAYER_ADDRESS=${POLYGON_RELAYER_ADDRESS}
+      - POLYGON_TOKEN_ADDRESS=${POLYGON_TOKEN_ADDRESS}
+      - ARBITRUM_VAULT_ADDRESS=${ARBITRUM_VAULT_ADDRESS}
+      - ARBITRUM_RELAYER_ADDRESS=${ARBITRUM_RELAYER_ADDRESS}
+      - ARBITRUM_TOKEN_ADDRESS=${ARBITRUM_TOKEN_ADDRESS}
+      - OPTIMISM_VAULT_ADDRESS=${OPTIMISM_VAULT_ADDRESS}
+      - OPTIMISM_RELAYER_ADDRESS=${OPTIMISM_RELAYER_ADDRESS}
+      - OPTIMISM_TOKEN_ADDRESS=${OPTIMISM_TOKEN_ADDRESS}
+      - BASE_VAULT_ADDRESS=${BASE_VAULT_ADDRESS}
+      - BASE_RELAYER_ADDRESS=${BASE_RELAYER_ADDRESS}
+      - BASE_TOKEN_ADDRESS=${BASE_TOKEN_ADDRESS}
+      - RELAYER_PRIVATE_KEY=${RELAYER_PRIVATE_KEY}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - idrc-network
+    restart: always
+
+  # Indexer (Production)
+  indexer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.indexer
+    container_name: idrc-indexer-prod
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/idrc_indexer
+      - MAINNET_RPC_URL=${MAINNET_RPC_URL}
+      - POLYGON_RPC_URL=${POLYGON_RPC_URL}
+      - ARBITRUM_RPC_URL=${ARBITRUM_RPC_URL}
+      - OPTIMISM_RPC_URL=${OPTIMISM_RPC_URL}
+      - BASE_RPC_URL=${BASE_RPC_URL}
+      - MAINNET_TOKEN_ADDRESS=${MAINNET_TOKEN_ADDRESS}
+      - MAINNET_MULTISIG_ADDRESS=${MAINNET_MULTISIG_ADDRESS}
+      - MAINNET_RESERVE_ADDRESS=${MAINNET_RESERVE_ADDRESS}
+      - MAINNET_VAULT_ADDRESS=${MAINNET_VAULT_ADDRESS}
+      - MAINNET_RELAYER_ADDRESS=${MAINNET_RELAYER_ADDRESS}
+      - POLYGON_TOKEN_ADDRESS=${POLYGON_TOKEN_ADDRESS}
+      - POLYGON_MULTISIG_ADDRESS=${POLYGON_MULTISIG_ADDRESS}
+      - POLYGON_RESERVE_ADDRESS=${POLYGON_RESERVE_ADDRESS}
+      - POLYGON_VAULT_ADDRESS=${POLYGON_VAULT_ADDRESS}
+      - POLYGON_RELAYER_ADDRESS=${POLYGON_RELAYER_ADDRESS}
+      - ARBITRUM_TOKEN_ADDRESS=${ARBITRUM_TOKEN_ADDRESS}
+      - ARBITRUM_MULTISIG_ADDRESS=${ARBITRUM_MULTISIG_ADDRESS}
+      - ARBITRUM_RESERVE_ADDRESS=${ARBITRUM_RESERVE_ADDRESS}
+      - ARBITRUM_VAULT_ADDRESS=${ARBITRUM_VAULT_ADDRESS}
+      - ARBITRUM_RELAYER_ADDRESS=${ARBITRUM_RELAYER_ADDRESS}
+      - OPTIMISM_TOKEN_ADDRESS=${OPTIMISM_TOKEN_ADDRESS}
+      - OPTIMISM_MULTISIG_ADDRESS=${OPTIMISM_MULTISIG_ADDRESS}
+      - OPTIMISM_RESERVE_ADDRESS=${OPTIMISM_RESERVE_ADDRESS}
+      - OPTIMISM_VAULT_ADDRESS=${OPTIMISM_VAULT_ADDRESS}
+      - OPTIMISM_RELAYER_ADDRESS=${OPTIMISM_RELAYER_ADDRESS}
+      - BASE_TOKEN_ADDRESS=${BASE_TOKEN_ADDRESS}
+      - BASE_MULTISIG_ADDRESS=${BASE_MULTISIG_ADDRESS}
+      - BASE_RESERVE_ADDRESS=${BASE_RESERVE_ADDRESS}
+      - BASE_VAULT_ADDRESS=${BASE_VAULT_ADDRESS}
+      - BASE_RELAYER_ADDRESS=${BASE_RELAYER_ADDRESS}
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    networks:
+      - idrc-network
+    restart: always
+
+  # Prometheus (Production)
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: idrc-prometheus-prod
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=50GB'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    networks:
+      - idrc-network
+    restart: always
+
+  # Grafana (Production)
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: idrc-grafana-prod
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=https://grafana.idrc.io
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_HOST=postgres:5432
+      - GF_DATABASE_NAME=grafana
+      - GF_DATABASE_USER=${POSTGRES_USER}
+      - GF_DATABASE_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources.prod.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - grafana_data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - idrc-network
+    restart: always
+
+  # Nginx Reverse Proxy (Production)
+  nginx:
+    image: nginx:alpine
+    container_name: idrc-nginx-prod
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    networks:
+      - idrc-network
+    restart: always
+
+  # Log Aggregation (Loki)
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: idrc-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki/local-config.yaml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - idrc-network
+    restart: always
+
+  # Log Shipper (Promtail)
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: idrc-promtail
+    volumes:
+      - ./promtail/promtail.yml:/etc/promtail/config.yml
+      - /var/log:/var/log
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - idrc-network
+    restart: always
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+
+networks:
+  idrc-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,95 @@
+# Echidna Configuration for IDRC Fuzzing
+# Run with: echidna-test contracts/token/IDRCToken.sol --config echidna.config.yaml --contract IDRCToken
+
+# General settings
+testMode: "assertion"
+seqLen: 50
+testLimit: 50000
+shrinkLimit: 5000
+format: "text"
+
+# Coverage settings
+coverage: true
+estimateGas: true
+
+# Filter settings
+filter:
+  # Only run tests matching these patterns
+  - "test_*"
+  - "invariant_*"
+
+# Contract-specific settings
+contracts:
+  IDRCToken:
+    # Constructor arguments
+    constructorArgs: []
+    # Setup function to call before fuzzing
+    setup: "setUp"
+    # Invariant functions to test
+    invariants:
+      - "invariant_totalSupplyEqualsSumOfBalances"
+      - "invariant_noNegativeBalances"
+      - "invariant_pausedPreventsTransfers"
+      - "invariant_blacklistPreventsTransfers"
+      - "invariant_onlyMinterCanMint"
+      - "invariant_onlyBurnerCanBurn"
+      - "invariant_permitNonceIncreases"
+      - "invariant_roleHierarchyRespected"
+
+  MultisigWallet:
+    constructorArgs:
+      - ["0x1", "0x2", "0x3"]  # signers
+      - 2                       # threshold
+      - 3600                    # timelock
+    setup: "setUp"
+    invariants:
+      - "invariant_thresholdNotExceeded"
+      - "invariant_timelockEnforced"
+      - "invariant_onlySignersCanConfirm"
+      - "invariant_executionOnceOnly"
+      - "invariant_confirmationsTrackedCorrectly"
+
+  BridgeVault:
+    constructorArgs:
+      - "0x1"                   # admin
+      - "0xTokenAddress"        # token
+      - "0xAccessControlAddress"
+      - "0xMultisigAddress"
+      - 11155111                # chainId
+    setup: "setUp"
+    invariants:
+      - "invariant_burnReducesSupply"
+      - "invariant_mintIncreasesSupply"
+      - "invariant_nonceNotReused"
+      - "invariant_onlyRelayerCanBridge"
+      - "invariant_pauseStopsOperations"
+
+  BridgeRelayer:
+    constructorArgs:
+      - "0x1"                   # admin
+      - "0xVaultAddress"
+      - "0xAccessControlAddress"
+      - "0xMultisigAddress"
+    setup: "setUp"
+    invariants:
+      - "invariant_nonceNotReused"
+      - "invariant_onlyRelayerCanRelay"
+      - "invariant_supportedChainsOnly"
+      - "invariant_emergencyWithdrawAdminOnly"
+
+# Corpus directory for saving/loading test cases
+corpusDir: "echidna-corpus"
+
+# Seed for reproducible runs
+seed: 123456789
+
+# Timeout settings
+timeout: 300
+
+# Solc settings
+solc:
+  version: "0.8.24"
+  optimize: true
+  runs: 200
+  evmVersion: "cancun"
+  viaIR: true

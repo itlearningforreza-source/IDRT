@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: idrc-api
+  namespace: idrc
+  labels:
+    app: idrc-api
+    component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: idrc-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: idrc-api
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: idrc-api
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: api
+          image: idrc/api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+            - containerPort: 8001
+              name: metrics
+          envFrom:
+            - configMapRef:
+                name: idrc-config
+            - secretRef:
+                name: idrc-secrets
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - idrc-api
+                topologyKey: kubernetes.io/hostname

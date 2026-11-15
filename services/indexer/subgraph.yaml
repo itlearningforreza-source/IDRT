@@ -1,0 +1,157 @@
+specVersion: 1.0.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  # IDRCToken
+  - kind: ethereum
+    name: IDRCToken
+    network: sepolia
+    source:
+      address: "{{TOKEN_ADDRESS}}"
+      abi: IDRCToken
+      startBlock: {{START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Transfer
+        - Approval
+        - Mint
+        - Burn
+        - Blacklist
+        - Unblacklist
+        - Pause
+        - Unpause
+        - RoleGranted
+        - RoleRevoked
+      abis:
+        - name: IDRCToken
+          file: ./abis/IDRCToken.json
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,uint256)
+          handler: handleTransfer
+        - event: Approval(indexed address,indexed address,uint256)
+          handler: handleApproval
+        - event: Minted(indexed address,uint256)
+          handler: handleMint
+        - event: Burned(indexed address,uint256)
+          handler: handleBurn
+        - event: Blacklisted(indexed address)
+          handler: handleBlacklist
+        - event: Unblacklisted(indexed address)
+          handler: handleUnblacklist
+        - event: Paused(indexed address)
+          handler: handlePause
+        - event: Unpaused(indexed address)
+          handler: handleUnpause
+        - event: RoleGranted(indexed bytes32,indexed address,indexed address)
+          handler: handleRoleGranted
+        - event: RoleRevoked(indexed bytes32,indexed address,indexed address)
+          handler: handleRoleRevoked
+      file: ./src/token.ts
+
+  # MultisigWallet
+  - kind: ethereum
+    name: MultisigWallet
+    network: sepolia
+    source:
+      address: "{{MULTISIG_ADDRESS}}"
+      abi: MultisigWallet
+      startBlock: {{START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - MultisigTransaction
+        - Confirmation
+      abis:
+        - name: MultisigWallet
+          file: ./abis/MultisigWallet.json
+      eventHandlers:
+        - event: Submission(indexed address,uint256)
+          handler: handleSubmission
+        - event: Confirmation(indexed address,uint256)
+          handler: handleConfirmation
+        - event: Revocation(indexed address,uint256)
+          handler: handleRevocation
+        - event: Execution(indexed address,uint256)
+          handler: handleExecution
+        - event: ExecutionFailure(indexed address,uint256)
+          handler: handleExecutionFailure
+      file: ./src/multisig.ts
+
+  # ProofOfReserve
+  - kind: ethereum
+    name: ProofOfReserve
+    network: sepolia
+    source:
+      address: "{{RESERVE_ADDRESS}}"
+      abi: ProofOfReserve
+      startBlock: {{START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - AuditReport
+        - FiatBalanceUpdate
+      abis:
+        - name: ProofOfReserve
+          file: ./abis/ProofOfReserve.json
+      eventHandlers:
+        - event: AuditProofSubmitted(indexed uint256,indexed bytes32,uint256,indexed address)
+          handler: handleAuditProof
+        - event: FiatBalanceUpdated(uint256,indexed address)
+          handler: handleFiatBalanceUpdate
+      file: ./src/reserve.ts
+
+  # BridgeVault
+  - kind: ethereum
+    name: BridgeVault
+    network: sepolia
+    source:
+      address: "{{VAULT_ADDRESS}}"
+      abi: BridgeVault
+      startBlock: {{START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - BridgeTransfer
+      abis:
+        - name: BridgeVault
+          file: ./abis/BridgeVault.json
+      eventHandlers:
+        - event: TokensLocked(indexed uint256,indexed address,indexed address,uint256,uint256)
+          handler: handleTokensLocked
+        - event: TokensReleased(indexed uint256,indexed address,uint256)
+          handler: handleTokensReleased
+      file: ./src/bridge.ts
+
+  # BridgeRelayer
+  - kind: ethereum
+    name: BridgeRelayer
+    network: sepolia
+    source:
+      address: "{{RELAYER_ADDRESS}}"
+      abi: BridgeRelayer
+      startBlock: {{START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - BridgeMessage
+      abis:
+        - name: BridgeRelayer
+          file: ./abis/BridgeRelayer.json
+      eventHandlers:
+        - event: MessageRelayed(indexed uint256,indexed uint256,indexed uint256,address,uint256)
+          handler: handleMessageRelayed
+      file: ./src/bridge.ts
+
+  # Add same data sources for other networks (Polygon, BSC, Arbitrum, Optimism, Base)
+  # Each network gets its own set of data sources with network-specific addresses

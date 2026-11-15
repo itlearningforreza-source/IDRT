@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDRC Stablecoin Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f5f5f7;
+            --surface: rgba(255, 255, 255, 0.7);
+            --surface-hover: rgba(255, 255, 255, 0.9);
+            --text-primary: #1d1d1f;
+            --text-secondary: #86868b;
+            --accent: #0066cc;
+            --accent-hover: #0077ed;
+            --success: #34c759;
+            --danger: #ff3b30;
+            --warning: #ffcc00;
+            --border: rgba(0, 0, 0, 0.1);
+            --shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            --radius: 20px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-color);
+            background-image: radial-gradient(circle at 10% 20%, rgba(0, 102, 204, 0.05) 0%, transparent 40%),
+                              radial-gradient(circle at 90% 80%, rgba(52, 199, 89, 0.05) 0%, transparent 40%);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 40px 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1, h2, h3 {
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            background: linear-gradient(135deg, #1d1d1f 0%, #434343 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            margin-top: 10px;
+        }
+
+        /* Glassmorphism Cards */
+        .card {
+            background: var(--surface);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 30px;
+            box-shadow: var(--shadow);
+            transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), background 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            background: var(--surface-hover);
+        }
+
+        /* Dashboard Metrics */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .metric {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .metric-title {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+
+        .metric-value {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .metric-value.success { color: var(--success); }
+        .metric-value.danger { color: var(--danger); }
+        .metric-value.warning { color: var(--warning); }
+
+        /* Actions Grid */
+        .actions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        label {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        input, select {
+            padding: 12px 16px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.5);
+            font-size: 1rem;
+            font-family: 'Inter', sans-serif;
+            color: var(--text-primary);
+            transition: all 0.2s ease;
+            outline: none;
+        }
+
+        input:focus, select:focus {
+            border-color: var(--accent);
+            background: #fff;
+            box-shadow: 0 0 0 4px rgba(0, 102, 204, 0.1);
+        }
+
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            background: var(--accent-hover);
+            transform: scale(1.02);
+            box-shadow: 0 5px 15px rgba(0, 102, 204, 0.3);
+        }
+        
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button.secondary {
+            background: transparent;
+            color: var(--accent);
+            border: 1px solid var(--accent);
+        }
+
+        button.secondary:hover {
+            background: rgba(0, 102, 204, 0.05);
+        }
+
+        /* Lists */
+        .tx-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .tx-item {
+            background: rgba(255, 255, 255, 0.5);
+            border: 1px solid var(--border);
+            padding: 15px;
+            border-radius: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tx-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .tx-title {
+            font-weight: 600;
+        }
+        
+        .tx-meta {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .tx-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .tx-actions button {
+            width: auto;
+            padding: 8px 16px;
+            margin: 0;
+            font-size: 0.85rem;
+        }
+
+        /* Toast Notifications */
+        #toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 1000;
+        }
+
+        .toast {
+            background: rgba(29, 29, 31, 0.9);
+            color: white;
+            padding: 16px 24px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transform: translateX(120%);
+            animation: slideIn 0.3s forwards cubic-bezier(0.25, 0.8, 0.25, 1);
+        }
+        
+        .toast.error {
+            background: rgba(255, 59, 48, 0.9);
+        }
+
+        @keyframes slideIn {
+            to { transform: translateX(0); }
+        }
+
+        @keyframes slideOut {
+            to { transform: translateX(120%); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>IDR Coin (IDRC)</h1>
+            <p>Fiat-collateralised Stablecoin Pegged 1:1 to Indonesian Rupiah</p>
+        </div>
+
+        <!-- Metrics Overview -->
+        <div class="metrics-grid">
+            <div class="card metric">
+                <span class="metric-title">Total Supply</span>
+                <span class="metric-value" id="val-supply">0 IDRC</span>
+            </div>
+            <div class="card metric">
+                <span class="metric-title">Fiat Reserve</span>
+                <span class="metric-value" id="val-reserve">0 IDR</span>
+            </div>
+            <div class="card metric">
+                <span class="metric-title">Reserve Ratio</span>
+                <span class="metric-value" id="val-ratio">0.00%</span>
+            </div>
+            <div class="card metric">
+                <span class="metric-title">Status</span>
+                <span class="metric-value success" id="val-status">Active</span>
+            </div>
+        </div>
+
+        <div class="actions-grid">
+            <!-- Multisig Propose -->
+            <div class="card">
+                <h3>🏦 Multisig: Propose Mint</h3>
+                <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:20px;">Propose printing new IDRC tokens. Requires 2/3 signatures.</p>
+                <div class="form-group">
+                    <label>Proposer</label>
+                    <select id="proposer-select">
+                        <option value="BankIndonesia">Bank Indonesia</option>
+                        <option value="Kemenkeu">Kemenkeu</option>
+                        <option value="OJK">OJK</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Target Address</label>
+                    <input type="text" id="mint-target" placeholder="e.g. 0xKasNegara" value="0xKasNegara">
+                </div>
+                <div class="form-group">
+                    <label>Amount (IDRC)</label>
+                    <input type="number" id="mint-amount" placeholder="1000000" value="1000000000">
+                </div>
+                <button onclick="proposeMint()">Propose Mint</button>
+            </div>
+
+            <!-- Oracle Update -->
+            <div class="card">
+                <h3>🔄 Oracle Update</h3>
+                <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:20px;">Push new fiat reserve balance from custodian bank.</p>
+                <div class="form-group">
+                    <label>New Fiat Balance (IDR)</label>
+                    <input type="number" id="oracle-balance" placeholder="1000000000" value="1000000000">
+                </div>
+                <button class="secondary" onclick="updateOracle()">Push Balance</button>
+            </div>
+
+            <!-- Check Balance -->
+            <div class="card">
+                <h3>🔍 Check Balance</h3>
+                <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:20px;">Query token balance of any address.</p>
+                <div class="form-group">
+                    <label>Wallet Address</label>
+                    <input type="text" id="check-address" placeholder="0xKasNegara" value="0xKasNegara">
+                </div>
+                <button class="secondary" onclick="checkBalance()">Check Balance</button>
+                <div id="balance-result" style="margin-top: 15px; font-weight: 600; text-align: center; color: var(--accent);"></div>
+            </div>
+        </div>
+
+        <!-- Pending Transactions -->
+        <div class="card" style="margin-top: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3>📝 Pending Multisig Transactions</h3>
+                <button class="secondary" style="width: auto; margin: 0;" onclick="loadPending()">Refresh</button>
+            </div>
+            <ul class="tx-list" id="pending-list">
+                <!-- Transactions injected here -->
+            </ul>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
+
+    <script>
+        // API Helpers
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                
+                document.getElementById('val-supply').textContent = formatCurrency(data.supply) + ' IDRC';
+                document.getElementById('val-reserve').textContent = formatCurrency(data.fiat_reserve) + ' IDR';
+                
+                const ratioEl = document.getElementById('val-ratio');
+                ratioEl.textContent = data.reserve_ratio + '%';
+                
+                if (data.reserve_ratio >= 100) {
+                    ratioEl.className = 'metric-value success';
+                } else if (data.reserve_ratio >= 98) {
+                    ratioEl.className = 'metric-value warning';
+                } else {
+                    ratioEl.className = 'metric-value danger';
+                }
+
+                const statusEl = document.getElementById('val-status');
+                statusEl.textContent = data.is_paused ? 'Paused' : 'Active';
+                statusEl.className = data.is_paused ? 'metric-value danger' : 'metric-value success';
+                
+                if (data.alerts && data.alerts.length > 0) {
+                    data.alerts.forEach(a => showToast(`Alert: ${a.message}`, 'error'));
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function loadPending() {
+            try {
+                const res = await fetch('/api/multisig/pending');
+                const data = await res.json();
+                const list = document.getElementById('pending-list');
+                list.innerHTML = '';
+                
+                if (data.pending_transactions.length === 0) {
+                    list.innerHTML = '<li style="text-align:center; color:var(--text-secondary); padding: 20px;">No pending transactions</li>';
+                    return;
+                }
+
+                data.pending_transactions.forEach(tx => {
+                    const li = document.createElement('li');
+                    li.className = 'tx-item';
+                    
+                    const canExecute = tx.approvals.length >= tx.threshold;
+                    
+                    li.innerHTML = `
+                        <div class="tx-info">
+                            <span class="tx-title">${tx.description}</span>
+                            <span class="tx-meta">Proposed by: ${tx.proposed_by} | Approvals: ${tx.approvals.length}/${tx.threshold} (${tx.approvals.join(', ')})</span>
+                        </div>
+                        <div class="tx-actions">
+                            <select id="signer-${tx.id}" style="width: auto; padding: 8px;">
+                                <option value="BankIndonesia">Bank Indonesia</option>
+                                <option value="Kemenkeu">Kemenkeu</option>
+                                <option value="OJK">OJK</option>
+                            </select>
+                            <button onclick="approveTx('${tx.id}')">Approve</button>
+                            <button class="${canExecute ? '' : 'secondary'}" onclick="executeTx('${tx.id}')" ${canExecute ? '' : 'disabled'}>Execute</button>
+                        </div>
+                    `;
+                    list.appendChild(li);
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function proposeMint() {
+            const caller = document.getElementById('proposer-select').value;
+            const target = document.getElementById('mint-target').value;
+            const amount = parseFloat(document.getElementById('mint-amount').value);
+            
+            try {
+                const res = await fetch('/api/multisig/propose_mint', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ caller, target, amount })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast('Transaction Proposed: ' + data.tx_id);
+                    loadPending();
+                } else {
+                    showToast(data.detail, 'error');
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        async function approveTx(txId) {
+            const caller = document.getElementById(`signer-${txId}`).value;
+            try {
+                const res = await fetch(`/api/multisig/approve?tx_id=${txId}&caller=${caller}`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message);
+                    loadPending();
+                } else {
+                    showToast(data.detail, 'error');
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        async function executeTx(txId) {
+            const caller = document.getElementById(`signer-${txId}`).value;
+            try {
+                const res = await fetch(`/api/multisig/execute?tx_id=${txId}&caller=${caller}`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message);
+                    loadPending();
+                    fetchStatus();
+                } else {
+                    showToast(data.detail, 'error');
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        async function updateOracle() {
+            const balance = parseFloat(document.getElementById('oracle-balance').value);
+            try {
+                const res = await fetch(`/api/oracle/update?balance=${balance}`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message);
+                    fetchStatus();
+                } else {
+                    showToast(data.detail, 'error');
+                }
+            } catch (err) {
+                showToast(err.message, 'error');
+            }
+        }
+
+        async function checkBalance() {
+            const address = document.getElementById('check-address').value;
+            try {
+                const res = await fetch(`/api/balance/${address}`);
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('balance-result').textContent = `${formatCurrency(data.balance)} IDRC`;
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        // Utils
+        function formatCurrency(num) {
+            return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(num);
+        }
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <div style="font-size: 1.2rem;">${type === 'success' ? '✅' : '❌'}</div>
+                <div>${message}</div>
+            `;
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.animation = 'slideOut 0.3s forwards cubic-bezier(0.25, 0.8, 0.25, 1)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Init
+        fetchStatus();
+        loadPending();
+        setInterval(fetchStatus, 5000);
+    </script>
+</body>
+</html>

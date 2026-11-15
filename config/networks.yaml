@@ -1,0 +1,192 @@
+# IDRC Network Configuration
+# All RPC URLs and API keys should be set via environment variables
+
+networks:
+  # Ethereum
+  ethereum:
+    mainnet:
+      chain_id: 1
+      name: "Ethereum Mainnet"
+      rpc_url: "${ETHEREUM_MAINNET_RPC_URL}"
+      explorer_url: "https://etherscan.io"
+      api_key: "${ETHERSCAN_API_KEY}"
+      native_currency: "ETH"
+      block_time: 12
+      confirmation_blocks: 3
+      contracts:
+        idrc_token: ""
+        multisig: ""
+        reserve: ""
+        bridge_vault: ""
+        bridge_relayer: ""
+        proxy_admin: ""
+      gas:
+        max_fee_per_gas_gwei: 100
+        max_priority_fee_gwei: 2
+
+    sepolia:
+      chain_id: 11155111
+      name: "Ethereum Sepolia"
+      rpc_url: "${ETHEREUM_SEPOLIA_RPC_URL}"
+      explorer_url: "https://sepolia.etherscan.io"
+      api_key: "${ETHERSCAN_API_KEY}"
+      native_currency: "ETH"
+      block_time: 12
+      confirmation_blocks: 3
+      contracts:
+        idrc_token: ""
+        multisig: ""
+        reserve: ""
+        bridge_vault: ""
+        bridge_relayer: ""
+        proxy_admin: ""
+      gas:
+        max_fee_per_gas_gwei: 50
+        max_priority_fee_gwei: 2
+
+  # Polygon
+  polygon:
+    mainnet:
+      chain_id: 137
+      name: "Polygon Mainnet"
+      rpc_url: "${POLYGON_MAINNET_RPC_URL}"
+      explorer_url: "https://polygonscan.com"
+      api_key: "${POLYGONSCAN_API_KEY}"
+      native_currency: "MATIC"
+      block_time: 2
+      confirmation_blocks: 10
+      contracts:
+        idrc_token: ""
+        multisig: ""
+        reserve: ""
+        bridge_vault: ""
+        bridge_relayer: ""
+        proxy_admin: ""
+      gas:
+        max_fee_per_gas_gwei: 200
+        max_priority_fee_gwei: 30
+
+    amoy:
+      chain_id: 80002
+      name: "Polygon Amoy"
+      rpc_url: "${POLYGON_AMOY_RPC_URL}"
+      explorer_url: "https://amoy.polygonscan.com"
+      api_key: "${POLYGONSCAN_API_KEY}"
+      native_currency: "MATIC"
+      block_time: 2
+      confirmation_blocks: 10
+      contracts:
+        idrc_token: ""
+        multisig: ""
+        reserve: ""
+        bridge_vault: ""
+        bridge_relayer: ""
+        proxy_admin: ""
+      gas:
+        max_fee_per_gas_gwei: 100
+        max_priority_fee_gwei: 30
+
+  # BSC
+  bsc:
+    mainnet:
+      chain_id: 56
+      name: "BSC Mainnet"
+      rpc_url: "${BSC_MAINNET_RPC_URL}"
+      explorer_url: "https://bscscan.com"
+      api_key: "${BSCSCAN_API_KEY}"
+      native_currency: "BNB"
+      block_time: 3
+      confirmation_blocks: 15
+      contracts:
+        idrc_token: ""
+        multisig: ""
+        reserve: ""
+        bridge_vault: ""
+        bridge_relayer: ""
+        proxy_admin: ""
+      gas:
+        max_fee_per_gas_gwei: 10
+        max_priority_fee_gwei: 1
+
+  # Arbitrum
+  arbitrum:
+    mainnet:
+      chain_id: 42161
+      name: "Arbitrum One"
+      rpc_url: "${ARBITRUM_MAINNET_RPC_URL}"
+      explorer_url: "https://arbiscan.io"
+      api_key: "${ARBISCAN_API_KEY}"
+      native_currency: "ETH"
+      block_time: 0.25
+      confirmation_blocks: 1
+      contracts:
+        idrc_token: ""
+        multisig: ""
+        reserve: ""
+        bridge_vault: ""
+        bridge_relayer: ""
+        proxy_admin: ""
+      gas:
+        max_fee_per_gas_gwei: 1
+        max_priority_fee_gwei: 1
+
+  # Optimism
+  optimism:
+    mainnet:
+      chain_id: 10
+      name: "Optimism Mainnet"
+      rpc_url: "${OPTIMISM_MAINNET_RPC_URL}"
+      explorer_url: "https://optimistic.etherscan.io"
+      api_key: "${OPTIMISTIC_ETHERSCAN_API_KEY}"
+      native_currency: "ETH"
+      block_time: 2
+      confirmation_blocks: 2
+      contracts:
+        idrc_token: ""
+        multisig: ""
+        reserve: ""
+        bridge_vault: ""
+        bridge_relayer: ""
+        proxy_admin: ""
+      gas:
+        max_fee_per_gas_gwei: 1
+        max_priority_fee_gwei: 1
+
+  # Base
+  base:
+    mainnet:
+      chain_id: 8453
+      name: "Base Mainnet"
+      rpc_url: "${BASE_MAINNET_RPC_URL}"
+      explorer_url: "https://basescan.org"
+      api_key: "${BASESCAN_API_KEY}"
+      native_currency: "ETH"
+      block_time: 2
+      confirmation_blocks: 2
+      contracts:
+        idrc_token: ""
+        multisig: ""
+        reserve: ""
+        bridge_vault: ""
+        bridge_relayer: ""
+        proxy_admin: ""
+      gas:
+        max_fee_per_gas_gwei: 1
+        max_priority_fee_gwei: 1
+
+# Default network for deployment
+default_network: "sepolia"
+
+# Bridge configuration
+bridge:
+  supported_chains:
+    - ethereum
+    - polygon
+    - bsc
+    - arbitrum
+    - optimism
+    - base
+  relayer:
+    poll_interval_seconds: 30
+    max_retries: 3
+    gas_limit: 500000

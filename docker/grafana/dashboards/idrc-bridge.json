@@ -1,0 +1,216 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": 3,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "rate(idrc_bridge_burn_events_total[5m])",
+          "legendFormat": "Burn Events/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(idrc_bridge_mint_events_total[5m])",
+          "legendFormat": "Mint Events/sec",
+          "refId": "B"
+        }
+      ],
+      "title": "Bridge Event Rates",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "rate(idrc_bridge_volume_usd_total[5m])",
+          "legendFormat": "Volume USD/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "idrc_bridge_total_volume_usd",
+          "legendFormat": "Total Volume USD",
+          "refId": "B"
+        }
+      ],
+      "title": "Bridge Volume",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "idrc_bridge_relay_latency_seconds",
+          "legendFormat": "Relay Latency (s)",
+          "refId": "A"
+        },
+        {
+          "expr": "idrc_bridge_confirmation_latency_seconds",
+          "legendFormat": "Confirmation Latency (s)",
+          "refId": "B"
+        }
+      ],
+      "title": "Bridge Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "text": "FAILED"}, "1": {"color": "yellow", "text": "PENDING"}, "2": {"color": "green", "text": "SUCCESS"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "textMode": "auto"},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "idrc_bridge_last_transaction_status",
+          "legendFormat": "Last TX Status",
+          "refId": "A"
+        }
+      ],
+      "title": "Last Bridge Transaction Status",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 5,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "rate(idrc_bridge_failed_total[5m])",
+          "legendFormat": "Failed/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(idrc_bridge_replayed_total[5m])",
+          "legendFormat": "Replay Attempts/sec",
+          "refId": "B"
+        }
+      ],
+      "title": "Bridge Errors & Replay Protection",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "bar", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "idrc_bridge_pending_transactions",
+          "legendFormat": "Pending TXs",
+          "refId": "A"
+        },
+        {
+          "expr": "idrc_bridge_processed_today",
+          "legendFormat": "Processed Today",
+          "refId": "B"
+        }
+      ],
+      "title": "Bridge Transaction Queue",
+      "type": "bargauge"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["idrc", "bridge"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "IDRC Bridge Metrics",
+  "uid": "idrc-bridge",
+  "version": 1,
+  "weekStart": ""
+}

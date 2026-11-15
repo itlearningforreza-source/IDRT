@@ -1,0 +1,22 @@
+{
+  "network": "testnet",
+  "deployer": "0xDeployerAddress123456789012345678901234567890",
+  "timestamp": "2026-11-05T11:39:30.211217+00:00",
+  "token_implementation_address": "0xTokenImpl1d02e75b",
+  "proxy_address": "0xProxyae727d89",
+  "proxy_admin_address": "0xProxyAdminda960b3f",
+  "multisig_address": "0xMultiSig27e07ac2",
+  "reserve_address": "0xReserve9162513a",
+  "roles": {
+    "DEFAULT_ADMIN_ROLE": "0xMultiSig27e07ac2",
+    "MINTER_ROLE": "0xMultiSig27e07ac2",
+    "PAUSER_ROLE": "0xMultiSig27e07ac2",
+    "UPGRADER_ROLE": "0xMultiSig27e07ac2",
+    "BURNER_ROLE": "0xMultiSig27e07ac2",
+    "BLACKLISTER_ROLE": "0xMultiSig27e07ac2"
+  },
+  "token_name": "IDR Coin",
+  "token_symbol": "IDRC",
+  "token_decimals": 18,
+  "supply_cap": 10000000000000000000000000000
+}

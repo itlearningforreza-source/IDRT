@@ -1,0 +1,211 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: idrc-postgres
+    environment:
+      POSTGRES_DB: idrc
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - idrc-network
+
+  # Redis for caching and rate limiting
+  redis:
+    image: redis:7-alpine
+    container_name: idrc-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - idrc-network
+
+  # API Service
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: idrc-api
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/idrc
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-change-in-production}
+      - SEPOLIA_RPC_URL=${SEPOLIA_RPC_URL}
+      - AMOY_RPC_URL=${AMOY_RPC_URL}
+      - SEPOLIA_TOKEN_ADDRESS=${SEPOLIA_TOKEN_ADDRESS}
+      - SEPOLIA_MULTISIG_ADDRESS=${SEPOLIA_MULTISIG_ADDRESS}
+      - SEPOLIA_RESERVE_ADDRESS=${SEPOLIA_RESERVE_ADDRESS}
+      - SEPOLIA_VAULT_ADDRESS=${SEPOLIA_VAULT_ADDRESS}
+      - SEPOLIA_RELAYER_ADDRESS=${SEPOLIA_RELAYER_ADDRESS}
+      - AMOY_TOKEN_ADDRESS=${AMOY_TOKEN_ADDRESS}
+      - AMOY_MULTISIG_ADDRESS=${AMOY_MULTISIG_ADDRESS}
+      - AMOY_RESERVE_ADDRESS=${AMOY_RESERVE_ADDRESS}
+      - AMOY_VAULT_ADDRESS=${AMOY_VAULT_ADDRESS}
+      - AMOY_RELAYER_ADDRESS=${AMOY_RELAYER_ADDRESS}
+      - LOG_LEVEL=info
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - idrc-network
+    restart: unless-stopped
+
+  # Oracle Relayer
+  oracle:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.oracle
+    container_name: idrc-oracle
+    environment:
+      - CHAIN_ID=11155111
+      - RPC_URL=${SEPOLIA_RPC_URL}
+      - RESERVE_ADDRESS=${SEPOLIA_RESERVE_ADDRESS}
+      - ORACLE_PRIVATE_KEY=${ORACLE_PRIVATE_KEY}
+      - POLL_INTERVAL=900
+      - BANK_API_URL=${BANK_API_URL}
+      - BANK_API_KEY=${BANK_API_KEY}
+    depends_on:
+      - postgres
+    networks:
+      - idrc-network
+    restart: unless-stopped
+
+  # Bridge Relayer
+  bridge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.bridge
+    container_name: idrc-bridge
+    environment:
+      - SEPOLIA_RPC_URL=${SEPOLIA_RPC_URL}
+      - AMOY_RPC_URL=${AMOY_RPC_URL}
+      - SEPOLIA_VAULT_ADDRESS=${SEPOLIA_VAULT_ADDRESS}
+      - SEPOLIA_RELAYER_ADDRESS=${SEPOLIA_RELAYER_ADDRESS}
+      - SEPOLIA_TOKEN_ADDRESS=${SEPOLIA_TOKEN_ADDRESS}
+      - AMOY_VAULT_ADDRESS=${AMOY_VAULT_ADDRESS}
+      - AMOY_RELAYER_ADDRESS=${AMOY_RELAYER_ADDRESS}
+      - AMOY_TOKEN_ADDRESS=${AMOY_TOKEN_ADDRESS}
+      - RELAYER_PRIVATE_KEY=${RELAYER_PRIVATE_KEY}
+    depends_on:
+      - postgres
+    networks:
+      - idrc-network
+    restart: unless-stopped
+
+  # Indexer
+  indexer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.indexer
+    container_name: idrc-indexer
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/idrc_indexer
+      - SEPOLIA_RPC_URL=${SEPOLIA_RPC_URL}
+      - AMOY_RPC_URL=${AMOY_RPC_URL}
+      - SEPOLIA_TOKEN_ADDRESS=${SEPOLIA_TOKEN_ADDRESS}
+      - SEPOLIA_MULTISIG_ADDRESS=${SEPOLIA_MULTISIG_ADDRESS}
+      - SEPOLIA_RESERVE_ADDRESS=${SEPOLIA_RESERVE_ADDRESS}
+      - SEPOLIA_VAULT_ADDRESS=${SEPOLIA_VAULT_ADDRESS}
+      - SEPOLIA_RELAYER_ADDRESS=${SEPOLIA_RELAYER_ADDRESS}
+      - AMOY_TOKEN_ADDRESS=${AMOY_TOKEN_ADDRESS}
+      - AMOY_MULTISIG_ADDRESS=${AMOY_MULTISIG_ADDRESS}
+      - AMOY_RESERVE_ADDRESS=${AMOY_RESERVE_ADDRESS}
+      - AMOY_VAULT_ADDRESS=${AMOY_VAULT_ADDRESS}
+      - AMOY_RELAYER_ADDRESS=${AMOY_RELAYER_ADDRESS}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - idrc-network
+    restart: unless-stopped
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: idrc-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - idrc-network
+    restart: unless-stopped
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: idrc-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - idrc-network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: idrc-nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+      - grafana
+    networks:
+      - idrc-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  idrc-network:
+    driver: bridge

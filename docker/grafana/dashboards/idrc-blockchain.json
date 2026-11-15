@@ -1,0 +1,232 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": 2,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "idrc_token_total_supply",
+          "legendFormat": "Total Supply",
+          "refId": "A"
+        },
+        {
+          "expr": "idrc_token_circulating_supply",
+          "legendFormat": "Circulating Supply",
+          "refId": "B"
+        }
+      ],
+      "title": "Token Supply",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 120},
+              {"color": "red", "value": 150}
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "(idrc_reserve_collateralization_ratio / 100)",
+          "legendFormat": "Collateralization Ratio %",
+          "refId": "A"
+        }
+      ],
+      "title": "Collateralization Ratio",
+      "type": "gauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "idrc_reserve_fiat_balance_usd",
+          "legendFormat": "Fiat Reserve (USD)",
+          "refId": "A"
+        },
+        {
+          "expr": "idrc_reserve_onchain_balance",
+          "legendFormat": "On-chain Reserve",
+          "refId": "B"
+        }
+      ],
+      "title": "Reserve Balances",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "rate(idrc_mint_events_total[5m])",
+          "legendFormat": "Mint Events/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(idrc_burn_events_total[5m])",
+          "legendFormat": "Burn Events/sec",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(idrc_transfer_events_total[5m])",
+          "legendFormat": "Transfer Events/sec",
+          "refId": "C"
+        }
+      ],
+      "title": "Token Event Rates",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 5,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "rate(idrc_multisig_submitted_total[5m])",
+          "legendFormat": "Submitted/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(idrc_multisig_confirmed_total[5m])",
+          "legendFormat": "Confirmed/sec",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(idrc_multisig_executed_total[5m])",
+          "legendFormat": "Executed/sec",
+          "refId": "C"
+        }
+      ],
+      "title": "Multisig Transaction Rates",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"color": "red", "text": "PAUSED"}, "1": {"color": "green", "text": "ACTIVE"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "textMode": "auto"},
+      "pluginVersion": "8.0.0",
+      "targets": [
+        {
+          "expr": "idrc_token_paused",
+          "legendFormat": "Paused Status",
+          "refId": "A"
+        }
+      ],
+      "title": "Token Pause Status",
+      "type": "stat"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["idrc", "blockchain"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "IDRC Blockchain Metrics",
+  "uid": "idrc-blockchain",
+  "version": 1,
+  "weekStart": ""
+}
