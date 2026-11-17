@@ -1,0 +1,374 @@
+# Prometheus Alerting Rules for IDRC
+# File: docker/prometheus/alerts/idrc-alerts.yml
+
+groups:
+  # ========================================================================
+  # CRITICAL - Page immediately (P1)
+  # ========================================================================
+  - name: idrc.critical
+    interval: 30s
+    rules:
+      # Contract: Collateralization ratio below 100%
+      - alert: IDRCCollateralizationCritical
+        expr: |
+          idrc_reserve_collateralization_ratio < 1.0
+        for: 1m
+        labels:
+          severity: critical
+          team: blockchain
+          runbook: DR-02
+        annotations:
+          summary: "IDRC collateralization ratio below 100%"
+          description: |
+            Reserve ratio = {{ $value | printf "%.4f" }} (threshold: 1.0)
+            Fiat: {{ $labels.fiat_balance_idr | humanize }} IDR
+            Supply: {{ $labels.total_supply | humanize }} IDRC
+            IMMEDIATE ACTION REQUIRED - Execute DR-02
+
+      # Contract: Emergency pause activated
+      - alert: IDRCEmergencyPauseActivated
+        expr: |
+          idrc_token_paused == 1
+        for: 0m
+        labels:
+          severity: critical
+          team: blockchain
+          runbook: DR-01
+        annotations:
+          summary: "IDRC token transfers PAUSED"
+          description: |
+            Emergency pause activated on {{ $labels.chain }}.
+            All mint/burn/transfer operations blocked.
+            Investigate cause immediately - DR-01
+
+      # Contract: Supply cap exceeded (should never happen)
+      - alert: IDRCSupplyCapExceeded
+        expr: |
+          idrc_token_total_supply > idrc_token_supply_cap
+        for: 0m
+        labels:
+          severity: critical
+          team: blockchain
+        annotations:
+          summary: "IDRC supply cap EXCEEDED - INVARIANT VIOLATION"
+          description: |
+            Total supply ({{ $labels.total_supply }}) > cap ({{ $labels.supply_cap }})
+            This indicates a critical smart contract bug.
+            EMERGENCY PAUSE REQUIRED - DR-01
+
+      # Bridge: Stuck nonces > threshold
+      - alert: IDRCBridgeStuckNonces
+        expr: |
+          idrc_bridge_pending_nonces > 100
+        for: 5m
+        labels:
+          severity: critical
+          team: blockchain
+          runbook: DR-03
+        annotations:
+          summary: "IDRC bridge has {{ $value }} stuck nonces"
+          description: |
+            Chain: {{ $labels.src_chain }} -> {{ $labels.dst_chain }}
+            Pending nonces accumulating - relayer may be down.
+            Execute DR-03
+
+      # Oracle: Stale data > 1 hour
+      - alert: IDRCOracleStale
+        expr: |
+          (time() - idrc_reserve_last_oracle_update_timestamp) > 3600
+        for: 5m
+        labels:
+          severity: critical
+          team: blockchain
+          runbook: DR-02
+        annotations:
+          summary: "IDRC oracle data stale > 1 hour"
+          description: |
+            Last update: {{ $labels.last_update | humanizeDuration }} ago
+            Oracle: {{ $labels.oracle_address }}
+            Collateralization verification impossible.
+            Execute DR-02
+
+      # API: Complete outage
+      - alert: IDRCAPIOutage
+        expr: |
+          up{job="idrc-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "IDRC API completely down"
+          description: |
+            All API instances unreachable.
+            Check Kubernetes deployment, load balancer, DNS.
+
+      # Database: Primary down
+      - alert: IDRCDatabasePrimaryDown
+        expr: |
+          pg_up{role="primary"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+          runbook: DR-04
+        annotations:
+          summary: "PostgreSQL primary database DOWN"
+          description: |
+            Primary database unavailable. Failover to replica immediately.
+            Execute DR-04
+
+  # ========================================================================
+  # HIGH - Page within 15 min (P2)
+  # ========================================================================
+  - name: idrc.high
+    interval: 1m
+    rules:
+      # Contract: Large mint detected (> 100M IDRC)
+      - alert: IDRCLargeMintDetected
+        expr: |
+          increase(idrc_token_minted_total[5m]) > 100000000000000000000000000
+        for: 0m
+        labels:
+          severity: high
+          team: blockchain
+        annotations:
+          summary: "Large mint detected: {{ $value | humanize }} IDRC"
+          description: |
+            Mint of {{ $value | humanize }} IDRC in last 5 minutes.
+            Verify legitimate fiat deposit. Check DR-01 if suspicious.
+
+      # Contract: Collateralization ratio declining rapidly
+      - alert: IDRCCollateralizationDeclining
+        expr: |
+          deriv(idrc_reserve_collateralization_ratio[10m]) < -0.01
+        for: 5m
+        labels:
+          severity: high
+          team: blockchain
+        annotations:
+          summary: "Collateralization ratio declining rapidly"
+          description: |
+            Rate: {{ $value | printf "%.4f" }} per minute
+            Current: {{ $labels.current_ratio | printf "%.4f" }}
+            Investigate fiat outflows or oracle issues.
+
+      # Bridge: Relay latency high
+      - alert: IDRCBridgeRelayLatencyHigh
+        expr: |
+          histogram_quantile(0.95, rate(idrc_bridge_relay_duration_seconds_bucket[5m])) > 300
+        for: 5m
+        labels:
+          severity: high
+          team: blockchain
+        annotations:
+          summary: "Bridge relay latency P95 > 5 minutes"
+          description: |
+            Chain: {{ $labels.src_chain }} -> {{ $labels.dst_chain }}
+            Relayer may be stuck or destination chain congested.
+
+      # Bridge: Relayer balance low
+      - alert: IDRCBridgeRelayerBalanceLow
+        expr: |
+          idrc_bridge_relayer_balance_eth < 0.01
+        for: 10m
+        labels:
+          severity: high
+          team: blockchain
+        annotations:
+          summary: "Bridge relayer ETH balance < 0.01 ETH"
+          description: |
+            Relayer: {{ $labels.relayer_address }}
+            Chain: {{ $labels.chain }}
+            Fund relayer immediately to prevent stuck nonces.
+
+      # API: High error rate
+      - alert: IDRCAPIHighErrorRate
+        expr: |
+          rate(http_requests_total{job="idrc-api",code=~"5.."}[5m]) / rate(http_requests_total{job="idrc-api"}[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "API error rate > 5%"
+          description: |
+            5xx errors: {{ $value | printf "%.2%" }}
+            Check application logs and upstream dependencies.
+
+      # API: High latency
+      - alert: IDRCAPIHighLatency
+        expr: |
+          histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job="idrc-api"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "API P99 latency > 2 seconds"
+          description: |
+            P99: {{ $value | printf "%.2f" }}s
+            Investigate slow queries, external calls, or resource contention.
+
+      # Database: Replication lag
+      - alert: IDRCDatabaseReplicationLag
+        expr: |
+          pg_replication_lag_seconds > 60
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "PostgreSQL replication lag > 60 seconds"
+          description: |
+            Lag: {{ $value | humanizeDuration }}
+            Replica: {{ $labels.replica }}
+            May indicate primary overload or network issues.
+
+      # Kubernetes: Pod crash looping
+      - alert: IDRCK8sPodCrashLooping
+        expr: |
+          rate(kube_pod_container_status_restarts_total{namespace="idrc"}[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: high
+          team: platform
+        annotations:
+          summary: "Pod {{ $labels.pod }} crash looping"
+          description: |
+            Restart rate: {{ $value | printf "%.2f" }}/min
+            Check logs: kubectl logs -n idrc {{ $labels.pod }} --previous
+
+  # ========================================================================
+  # WARNING - Ticket within 1 hour (P3)
+  # ========================================================================
+  - name: idrc.warning
+    interval: 5m
+    rules:
+      # Contract: New role granted
+      - alert: IDRCRoleGranted
+        expr: |
+          increase(idrc_token_role_granted_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          team: blockchain
+        annotations:
+          summary: "New role granted on IDRC token"
+          description: |
+            Role: {{ $labels.role }}
+            Account: {{ $labels.account }}
+            Granted by: {{ $labels.sender }}
+            Verify authorized.
+
+      # Contract: Blacklist action
+      - alert: IDRCBlacklistAction
+        expr: |
+          increase(idrc_token_blacklisted_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          team: blockchain
+        annotations:
+          summary: "Address blacklisted on IDRC"
+          description: |
+            Account: {{ $labels.account }}
+            Action by: {{ $labels.sender }}
+            Verify compliance order.
+
+      # Oracle: Fiat balance changed significantly
+      - alert: IDRCFiatBalanceChanged
+        expr: |
+          abs(idrc_reserve_fiat_balance_idr - idrc_reserve_fiat_balance_idr offset 1h) / idrc_reserve_fiat_balance_idr offset 1h > 0.1
+        for: 0m
+        labels:
+          severity: warning
+          team: blockchain
+        annotations:
+          summary: "Fiat balance changed > 10% in 1 hour"
+          description: |
+            Change: {{ $value | printf "%.2%" }}
+            New balance: {{ $labels.new_balance | humanize }} IDR
+            Verify with bank custodian.
+
+      # API: CPU usage high
+      - alert: IDRCAPIHighCPU
+        expr: |
+          avg(rate(container_cpu_usage_seconds_total{namespace="idrc",pod=~"api-.*"}[5m])) by (pod) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API pod {{ $labels.pod }} CPU > 80%"
+          description: |
+            Consider scaling up or investigating CPU-intensive requests.
+
+      # API: Memory usage high
+      - alert: IDRCAPIHighMemory
+        expr: |
+          (container_memory_usage_bytes{namespace="idrc",pod=~"api-.*"} / container_spec_memory_limit_bytes{namespace="idrc",pod=~"api-.*"}) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API pod {{ $labels.pod }} memory > 85%"
+          description: |
+            Potential memory leak or insufficient limits.
+
+      # Kubernetes: HPA at max replicas
+      - alert: IDRCK8sHPAAtMax
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas == kube_horizontalpodautoscaler_spec_max_replicas
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "HPA {{ $labels.hpa }} at max replicas"
+          description: |
+            Consider increasing maxReplicas or investigating load pattern.
+
+      # Certificate: Expiring soon
+      - alert: IDRCCertExpiringSoon
+        expr: |
+          ssl_certificate_expiration_timestamp - time() < 2592000
+        for: 1h
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SSL certificate expires in < 30 days"
+          description: |
+            Cert: {{ $labels.cert }}
+            Expires: {{ $labels.expiration | humanizeDate }}
+            Renew via cert-manager or manual process.
+
+  # ========================================================================
+  # INFO - Log only (P4)
+  # ========================================================================
+  - name: idrc.info
+    interval: 10m
+    rules:
+      - alert: IDRCNewBlock
+        expr: |
+          increase(idrc_chain_block_height[10m]) > 0
+        for: 0m
+        labels:
+          severity: info
+          team: blockchain
+        annotations:
+          summary: "New blocks produced"
+          description: "Chain {{ $labels.chain }} at height {{ $value }}"
+
+      - alert: IDRCTotalSupplyUpdate
+        expr: |
+          idrc_token_total_supply != idrc_token_total_supply offset 1h
+        for: 0m
+        labels:
+          severity: info
+          team: blockchain
+        annotations:
+          summary: "Total supply changed"
+          description: "New supply: {{ $value | humanize }} IDRC"

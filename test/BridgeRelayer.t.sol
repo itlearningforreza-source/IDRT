@@ -19,12 +19,9 @@ contract BridgeRelayerTest is Test {
     function setUp() public {
         vm.startPrank(admin);
 
-        // Deploy token
-        token = new IDRCToken(
-            "IDR Coin", "IDRC",
-            admin, admin, admin, admin, admin, admin,
-            10_000_000_000 * 10**18
-        );
+        // Deploy token via initialize
+        token = new IDRCToken();
+        token.initialize("IDR Coin", "IDRC", admin, admin, admin, admin, admin, admin, 10_000_000_000 * 10**18);
 
         // Deploy relayer
         relayerContract = new BridgeRelayer(relayer);

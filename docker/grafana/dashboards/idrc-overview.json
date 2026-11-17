@@ -1,252 +1,35 @@
 {
-  "annotations": {
-    "list": [
-      {
-        "builtIn": 1,
-        "datasource": "-- Grafana --",
-        "enable": true,
-        "hide": true,
-        "iconColor": "rgba(0, 211, 255, 1)",
-        "name": "Annotations & Alerts",
-        "type": "dashboard"
-      }
-    ]
+  "dashboard": {
+    "uid": "idrc-overview",
+    "title": "IDRC Production Overview",
+    "tags": ["idrc", "production", "stablecoin"],
+    "timezone": "utc",
+    "refresh": "30s",
+    "time": {"from": "now-6h", "to": "now"},
+    "panels": [
+      {"id": 1, "title": "Cluster Health", "type": "stat", "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4}, "targets": [{"expr": "up{job="idrc-api"}", "legendFormat": "API"}, {"expr": "pg_up{role="primary"}", "legendFormat": "PostgreSQL Primary"}, {"expr": "pg_up{role="replica"}", "legendFormat": "PostgreSQL Replica"}], "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}]}, "thresholds": {"mode": "absolute", "steps": [{"value": 0, "color": "red"}, {"value": 1, "color": "green"}]}}}},
+      {"id": 2, "title": "Token Supply & Collateralization", "type": "stat", "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4}, "targets": [{"expr": "idrc_token_total_supply / 1e18", "legendFormat": "Total Supply (IDRC)"}, {"expr": "idrc_reserve_collateralization_ratio", "legendFormat": "Collateralization Ratio"}, {"expr": "idrc_reserve_fiat_balance_idr / 1e18", "legendFormat": "Fiat Reserve (IDR)"}], "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"value": 0, "color": "red"}, {"value": 0.99, "color": "yellow"}, {"value": 1, "color": "green"}]}, "overrides": [{"matcher": {"type": "name", "options": "Total Supply (IDRC)"}, "properties": [{"id": "unit", "value": "idrc"}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"value": 0, "color": "green"}]}}]}}}},
+      {"id": 3, "title": "Token Status", "type": "stat", "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4}, "targets": [{"expr": "idrc_token_paused", "legendFormat": "Paused"}, {"expr": "idrc_token_supply_cap / 1e18", "legendFormat": "Supply Cap"}, {"expr": "idrc_token_total_supply / idrc_token_supply_cap", "legendFormat": "Cap Utilization"}], "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "Active", "color": "green"}, "1": {"text": "PAUSED", "color": "red"}}}], "thresholds": {"mode": "absolute", "steps": [{"value": 0, "color": "green"}, {"value": 1, "color": "red"}]}}}},
+      {"id": 4, "title": "Bridge Status", "type": "stat", "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4}, "targets": [{"expr": "idrc_bridge_pending_nonces", "legendFormat": "Pending Nonces"}, {"expr": "idrc_bridge_relayer_balance_eth", "legendFormat": "Relayer ETH Balance"}, {"expr": "idrc_bridge_total_locked / 1e18", "legendFormat": "Total Locked (IDRC)"}], "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"value": 0, "color": "green"}, {"value": 50, "color": "yellow"}, {"value": 100, "color": "red"}]}}}},
+      {"id": 5, "title": "Total Supply Over Time", "type": "timeseries", "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8}, "targets": [{"expr": "idrc_token_total_supply / 1e18", "legendFormat": "Total Supply (IDRC)"}, {"expr": "idrc_token_supply_cap / 1e18", "legendFormat": "Supply Cap"}], "fieldConfig": {"defaults": {"unit": "idrc", "custom": {"lineWidth": 2}}}},
+      {"id": 6, "title": "Collateralization Ratio", "type": "timeseries", "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8}, "targets": [{"expr": "idrc_reserve_collateralization_ratio", "legendFormat": "Ratio"}, {"expr": "1", "legendFormat": "Required (100%)"}], "fieldConfig": {"defaults": {"unit": "ratio", "min": 0, "max": 2, "thresholds": {"mode": "absolute", "steps": [{"value": 0, "color": "red"}, {"value": 1, "color": "green"}]}, "custom": {"lineWidth": 2}}}},
+      {"id": 7, "title": "Mint/Burn Rate (5m)", "type": "timeseries", "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8}, "targets": [{"expr": "rate(idrc_token_minted_total[5m]) / 1e18", "legendFormat": "Mint Rate (IDRC/min)"}, {"expr": "rate(idrc_token_burned_total[5m]) / 1e18", "legendFormat": "Burn Rate (IDRC/min)"}, {"expr": "rate(idrc_token_minted_total[5m]) / 1e18 - rate(idrc_token_burned_total[5m]) / 1e18", "legendFormat": "Net Rate (IDRC/min)"}], "fieldConfig": {"defaults": {"unit": "idrc/min"}}},
+      {"id": 8, "title": "Fiat Reserve Balance", "type": "timeseries", "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8}, "targets": [{"expr": "idrc_reserve_fiat_balance_idr / 1e18", "legendFormat": "Fiat Reserve (IDR)"}, {"expr": "idrc_token_total_supply / 1e18", "legendFormat": "Token Supply (IDRC)"}], "fieldConfig": {"defaults": {"unit": "idr"}}},
+      {"id": 9, "title": "Bridge Volume by Chain", "type": "barchart", "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8}, "targets": [{"expr": "sum by (src_chain) (rate(idrc_bridge_locked_total[1h])) / 1e18", "legendFormat": "{{src_chain}} Out"}, {"expr": "sum by (dst_chain) (rate(idrc_bridge_minted_total[1h])) / 1e18", "legendFormat": "{{dst_chain}} In"}], "fieldConfig": {"defaults": {"unit": "idr/hr"}}},
+      {"id": 10, "title": "Bridge Pending Nonces", "type": "timeseries", "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8}, "targets": [{"expr": "idrc_bridge_pending_nonces", "legendFormat": "Pending Nonces"}], "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"value": 0, "color": "green"}, {"value": 10, "color": "yellow"}, {"value": 50, "color": "red"}]}}}},
+      {"id": 11, "title": "API Request Rate", "type": "timeseries", "gridPos": {"x": 0, "y": 28, "w": 12, "h": 8}, "targets": [{"expr": "sum(rate(http_requests_total{job=\"idrc-api\"}[1m])) by (method, handler)", "legendFormat": "{{method}} {{handler}}"}], "fieldConfig": {"defaults": {"unit": "reqps"}}},
+      {"id": 12, "title": "API Latency (P50/P95/P99)", "type": "timeseries", "gridPos": {"x": 12, "y": 28, "w": 12, "h": 8}, "targets": [{"expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"idrc-api\"}[5m])) by (le))", "legendFormat": "P50"}, {"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"idrc-api\"}[5m])) by (le))", "legendFormat": "P95"}, {"expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"idrc-api\"}[5m])) by (le))", "legendFormat": "P99"}], "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"value": 0, "color": "green"}, {"value": 1, "color": "yellow"}, {"value": 2, "color": "red"}]}}}},
+      {"id": 13, "title": "API Error Rate", "type": "timeseries", "gridPos": {"x": 0, "y": 36, "w": 12, "h": 8}, "targets": [{"expr": "sum(rate(http_requests_total{job=\"idrc-api\",code=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"idrc-api\"}[5m]))", "legendFormat": "5xx Error Rate"}], "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}}},
+      {"id": 14, "title": "API Active Connections", "type": "timeseries", "gridPos": {"x": 12, "y": 36, "w": 12, "h": 8}, "targets": [{"expr": "sum(container_network_tcp_connections{namespace=\"idrc\",pod=~\"api-.*\"}) by (pod)", "legendFormat": "{{pod}}"}], "fieldConfig": {"defaults": {"unit": "short"}}},
+      {"id": 15, "title": "Database Connections", "type": "timeseries", "gridPos": {"x": 0, "y": 44, "w": 12, "h": 8}, "targets": [{"expr": "pg_stat_database_numbackends{datname=\"idrc\"}", "legendFormat": "Active Connections"}, {"expr": "pg_settings_max_connections", "legendFormat": "Max Connections"}], "fieldConfig": {"defaults": {"unit": "short"}}},
+      {"id": 16, "title": "Database Replication Lag", "type": "timeseries", "gridPos": {"x": 12, "y": 44, "w": 12, "h": 8}, "targets": [{"expr": "pg_replication_lag_seconds", "legendFormat": "Lag (seconds)"}], "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"value": 0, "color": "green"}, {"value": 10, "color": "yellow"}, {"value": 60, "color": "red"}]}}}},
+      {"id": 17, "title": "Kubernetes Pod Status", "type": "table", "gridPos": {"x": 0, "y": 52, "w": 12, "h": 8}, "targets": [{"expr": "kube_pod_status_phase{namespace=\"idrc\"}", "format": "table", "instant": true}], "fieldConfig": {"defaults": {"custom": {"align": "center", "displayMode": "auto"}}}},
+      {"id": 18, "title": "Resource Usage (CPU/Memory)", "type": "timeseries", "gridPos": {"x": 12, "y": 52, "w": 12, "h": 8}, "targets": [{"expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"idrc\"}[5m])) by (pod)", "legendFormat": "{{pod}} CPU"}, {"expr": "sum(container_memory_usage_bytes{namespace=\"idrc\"}) by (pod) / sum(container_spec_memory_limit_bytes{namespace=\"idrc\"}) by (pod)", "legendFormat": "{{pod}} Mem %"}], "fieldConfig": {"defaults": {"unit": "percentunit"}}},
+      {"id": 19, "title": "Oracle Updates", "type": "timeseries", "gridPos": {"x": 0, "y": 60, "w": 12, "h": 8}, "targets": [{"expr": "rate(idrc_reserve_oracle_updates_total[1h])", "legendFormat": "Updates/hour"}, {"expr": "(time() - idrc_reserve_last_oracle_update_timestamp) / 60", "legendFormat": "Minutes Since Last Update"}], "fieldConfig": {"defaults": {"unit": "short"}}},
+      {"id": 20, "title": "Role Changes & Blacklist Actions", "type": "table", "gridPos": {"x": 12, "y": 60, "w": 12, "h": 8}, "targets": [{"expr": "idrc_token_role_granted_total", "format": "table", "instant": true}, {"expr": "idrc_token_blacklisted_total", "format": "table", "instant": true}], "fieldConfig": {"defaults": {"custom": {"align": "left"}}}}
+    ],
+    "templating": {"list": [{"name": "chain", "type": "query", "query": "label_values(idrc_token_total_supply, chain)", "refresh": 1, "includeAll": true, "multi": false}]},
+    "annotations": {"list": [{"name": "Deployments", "datasource": "Prometheus", "expr": "idrc_deployment_timestamp", "iconColor": "blue", "tags": ["deploy"]}, {"name": "Incidents", "datasource": "Prometheus", "expr": "idrc_incident_timestamp", "iconColor": "red", "tags": ["incident"]}]}
   },
-  "editable": true,
-  "gnetId": null,
-  "graphTooltip": 0,
-  "id": 1,
-  "links": [],
-  "panels": [
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "green", "value": null},
-              {"color": "red", "value": 80}
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
-      "id": 1,
-      "options": {
-        "orientation": "auto",
-        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true
-      },
-      "pluginVersion": "8.0.0",
-      "targets": [
-        {
-          "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
-          "legendFormat": "Memory Usage %",
-          "refId": "A"
-        }
-      ],
-      "title": "System Memory Usage",
-      "type": "gauge"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 70},
-              {"color": "red", "value": 90}
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
-      "id": 2,
-      "options": {
-        "orientation": "auto",
-        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true
-      },
-      "pluginVersion": "8.0.0",
-      "targets": [
-        {
-          "expr": "100 - (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]) * 100)",
-          "legendFormat": "CPU Usage %",
-          "refId": "A"
-        }
-      ],
-      "title": "System CPU Usage",
-      "type": "gauge"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
-          "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-      "id": 3,
-      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
-      "pluginVersion": "8.0.0",
-      "targets": [
-        {
-          "expr": "sum(rate(http_requests_total[5m])) by (handler)",
-          "legendFormat": "{{handler}}",
-          "refId": "A"
-        }
-      ],
-      "title": "API Request Rate (req/s)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "mappings": [
-            {"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}
-          ],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-      "id": 4,
-      "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""}, "textMode": "auto"},
-      "pluginVersion": "8.0.0",
-      "targets": [
-        {
-          "expr": "up{job=\"api\"}",
-          "legendFormat": "API",
-          "refId": "A"
-        },
-        {
-          "expr": "up{job=\"oracle\"}",
-          "legendFormat": "Oracle",
-          "refId": "B"
-        },
-        {
-          "expr": "up{job=\"bridge\"}",
-          "legendFormat": "Bridge",
-          "refId": "C"
-        },
-        {
-          "expr": "up{job=\"indexer\"}",
-          "legendFormat": "Indexer",
-          "refId": "D"
-        },
-        {
-          "expr": "up{job=\"postgres\"}",
-          "legendFormat": "Postgres",
-          "refId": "E"
-        },
-        {
-          "expr": "up{job=\"redis\"}",
-          "legendFormat": "Redis",
-          "refId": "F"
-        }
-      ],
-      "title": "Service Health Status",
-      "type": "stat"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
-          "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
-          "unit": "ms"
-        },
-        "overrides": []
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
-      "id": 5,
-      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
-      "pluginVersion": "8.0.0",
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler)) * 1000",
-          "legendFormat": "p95 - {{handler}}",
-          "refId": "A"
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler)) * 1000",
-          "legendFormat": "p99 - {{handler}}",
-          "refId": "B"
-        }
-      ],
-      "title": "API Response Time (p95/p99)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {"axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"tooltip": false, "viz": false, "legend": false}, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true},
-          "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-      "id": 6,
-      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
-      "pluginVersion": "8.0.0",
-      "targets": [
-        {
-          "expr": "rate(idrc_tokens_minted_total[5m])",
-          "legendFormat": "Minted/sec",
-          "refId": "A"
-        },
-        {
-          "expr": "rate(idrc_tokens_burned_total[5m])",
-          "legendFormat": "Burned/sec",
-          "refId": "B"
-        },
-        {
-          "expr": "rate(idrc_transfers_total[5m])",
-          "legendFormat": "Transfers/sec",
-          "refId": "C"
-        }
-      ],
-      "title": "Token Activity Rate",
-      "type": "timeseries"
-    }
-  ],
-  "refresh": "10s",
-  "schemaVersion": 27,
-  "style": "dark",
-  "tags": ["idrc", "overview"],
-  "templating": {"list": []},
-  "time": {"from": "now-1h", "to": "now"},
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "IDRC Overview",
-  "uid": "idrc-overview",
-  "version": 1,
-  "weekStart": ""
+  "overwrite": true
 }

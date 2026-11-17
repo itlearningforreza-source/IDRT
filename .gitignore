@@ -163,3 +163,63 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+
+# ===========================================
+# PROJECT SPECIFIC
+# ===========================================
+
+# Foundry
+cache/
+out/
+broadcast/
+lib/
+remappings.txt
+
+# Python
+mypy_out.txt
+
+# Build outputs
+out/
+cache/
+
+# Environment (keep templates)
+.env
+.env.local
+.env.*.local
+!.env.*.template
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig
+
+# Secrets
+*.pem
+*.key
+*.crt
+secrets.yaml
+*.kms
+
+# Coverage
+lcov.info
+
+# Temporary
+tmp/
+temp/
+*.tmp

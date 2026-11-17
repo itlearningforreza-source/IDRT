@@ -12,6 +12,7 @@ import {Context} from "@openzeppelin/contracts/utils/Context.sol";
  */
 contract IDRCUpgradeable is IDRCToken, IIDRCUpgradeable {
     // _msgSender is inherited from IDRCToken (which overrides Context)
+    
     // ============================================================
     // Version Constants
     // ============================================================
@@ -35,23 +36,13 @@ contract IDRCUpgradeable is IDRCToken, IIDRCUpgradeable {
     // ============================================================
     // Constructor
     // ============================================================
-    constructor(
-        string memory name_,
-        string memory symbol_,
-        address admin,
-        address minter,
-        address pauser,
-        address upgrader,
-        address burner,
-        address blacklister,
-        uint256 supplyCap_
-    ) IDRCToken(name_, symbol_, admin, minter, pauser, upgrader, burner, blacklister, supplyCap_) {
-        _initializedVersion = VERSION_V3;
-    }
+    // Minimal constructor - all initialization in initialize()
+    constructor() {}
 
     // ============================================================
     // Initializer (for UUPS Proxy)
     // ============================================================
+    // Note: No initializer modifier here - parent IDRCToken.initialize has it
     function initialize(
         string memory name_,
         string memory symbol_,
@@ -62,17 +53,10 @@ contract IDRCUpgradeable is IDRCToken, IIDRCUpgradeable {
         address burner,
         address blacklister,
         uint256 supplyCap_
-    ) external override {
-        // ERC20 and ERC20Permit are already initialized via constructor
-        // Re-initialize roles and state for proxy
-        _setupRole(DEFAULT_ADMIN_ROLE, admin);
-        _setupRole(MINTER_ROLE, minter);
-        _setupRole(PAUSER_ROLE, pauser);
-        _setupRole(UPGRADER_ROLE, upgrader);
-        _setupRole(BURNER_ROLE, burner);
-        _setupRole(BLACKLISTER_ROLE, blacklister);
-        supplyCap = supplyCap_ > 0 ? supplyCap_ : 10_000_000_000 * 10**18;
-        reserveProofHash = bytes32(0);
+    ) public virtual override {
+        // Call parent initialize (which has the initializer modifier)
+        super.initialize(name_, symbol_, admin, minter, pauser, upgrader, burner, blacklister, supplyCap_);
+        
         _initializedVersion = VERSION_V3;
     }
 

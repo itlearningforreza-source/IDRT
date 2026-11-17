@@ -35,7 +35,9 @@ contract IDRCTokenTest is Test {
         multisig = new MultisigWallet(signers, 2, 3600); // 2-of-3, 1 hour timelock
 
         // Deploy implementation contracts (using constructor - no proxy in these tests)
-        token = new IDRCToken("IDR Coin", "IDRC", admin, minter, pauser, admin, burner, blacklister, 10_000_000_000 * 10**18);
+        token = new IDRCToken();
+        token.initialize("IDR Coin", "IDRC", admin, minter, pauser, admin, burner, blacklister, 10_000_000_000 * 10**18);
+        
         reserve = new ProofOfReserve(admin, oracle);
         vault = new BridgeVault(1, relayerAddr);
         relayer = new BridgeRelayer(relayerAddr);
