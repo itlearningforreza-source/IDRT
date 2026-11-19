@@ -104,11 +104,11 @@ contract IDRCUpgradeable is IDRCToken, IIDRCUpgradeable {
     ) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_initializedVersion == VERSION_V1, "InvalidVersion");
 
-        _setupRole(MINTER_ROLE, minter);
-        _setupRole(PAUSER_ROLE, pauser);
-        _setupRole(UPGRADER_ROLE, upgrader);
-        _setupRole(BURNER_ROLE, burner);
-        _setupRole(BLACKLISTER_ROLE, blacklister);
+        _grantRole(MINTER_ROLE, minter);
+        _grantRole(PAUSER_ROLE, pauser);
+        _grantRole(UPGRADER_ROLE, upgrader);
+        _grantRole(BURNER_ROLE, burner);
+        _grantRole(BLACKLISTER_ROLE, blacklister);
 
         _initializedVersion = VERSION_V2;
         emit MigrationCompleted(VERSION_V1, VERSION_V2);
@@ -125,11 +125,11 @@ contract IDRCUpgradeable is IDRCToken, IIDRCUpgradeable {
     ) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_initializedVersion == VERSION_V2, "InvalidVersion");
 
-        _setupRole(MINTER_ROLE, minter);
-        _setupRole(PAUSER_ROLE, pauser);
-        _setupRole(UPGRADER_ROLE, upgrader);
-        _setupRole(BURNER_ROLE, burner);
-        _setupRole(BLACKLISTER_ROLE, blacklister);
+        _grantRole(MINTER_ROLE, minter);
+        _grantRole(PAUSER_ROLE, pauser);
+        _grantRole(UPGRADER_ROLE, upgrader);
+        _grantRole(BURNER_ROLE, burner);
+        _grantRole(BLACKLISTER_ROLE, blacklister);
 
         supplyCap = supplyCap_;
 

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {IProofOfReserve} from "../interfaces/IReserve.sol";
-import {AccessControl} from "../access/AccessControl.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Context} from "@openzeppelin/contracts/utils/Context.sol";
@@ -15,7 +15,7 @@ import {Context} from "@openzeppelin/contracts/utils/Context.sol";
  * 2. Oracle-pushed fiat balance with collateralization ratio check
  */
 contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Pausable {
-    function _msgSender() internal view override(Context, AccessControl) returns (address) {
+    function _msgSender() internal view override(Context) returns (address) {
         return msg.sender;
     }
     // ============================================================
@@ -47,7 +47,7 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
     // Custom Errors
     error ZeroAddress();
     error InvalidProofHash();
-    error NegativeFiatBalance();
+    error ZeroFiatBalance();
     error OracleNotSet();
     error OnlyOracleAllowed();
     error UnderCollateralisedError(uint256 ratio, uint256 fiat, uint256 supply);
@@ -57,9 +57,10 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
     // Constructor
     // ============================================================
     constructor(address admin_, address oracle_) {
-        _setupRole(DEFAULT_ADMIN_ROLE, admin_);
-        _setupRole(ORACLE_ROLE, oracle_);
-        _setupRole(AUDITOR_ROLE, admin_); // admin can also be auditor initially
+        _admin = admin_;
+        _grantRole(DEFAULT_ADMIN_ROLE, admin_);
+        _grantRole(ORACLE_ROLE, oracle_);
+        _grantRole(AUDITOR_ROLE, admin_); // admin can also be auditor initially
         _oracle = oracle_;
     }
 
@@ -75,7 +76,7 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         whenNotPaused
     {
         if (proofHash == bytes32(0)) revert InvalidProofHash();
-        if (reportedFiatIdr == 0) revert NegativeFiatBalance();
+        if (reportedFiatIdr == 0) revert ZeroFiatBalance();
 
         uint256 seq = _auditReports.length + 1;
         _auditReports.push(AuditReport({
@@ -94,7 +95,7 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         address oldOracle = _oracle;
         _oracle = oracle_;
         _revokeRole(ORACLE_ROLE, oldOracle);
-        _setupRole(ORACLE_ROLE, oracle_);
+        _grantRole(ORACLE_ROLE, oracle_);
         emit OracleChanged(oldOracle, oracle_);
     }
 
@@ -115,6 +116,8 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         nonReentrant
         whenNotPaused
     {
+        if (newBalanceIdr == 0) revert ZeroFiatBalance();
+        
         _fiatBalanceIdr = newBalanceIdr;
         _lastOracleUpdate = block.timestamp;
         emit FiatBalanceUpdated(newBalanceIdr, msg.sender);
@@ -141,6 +144,10 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         return keccak256(reportData);
     }
 
+    function verifyProof(bytes calldata reportData) external view override returns (bool) {
+        return keccak256(reportData) == _latestProofHash;
+    }
+
     function latestProofHash() external view override returns (bytes32) {
         return _latestProofHash;
     }
@@ -157,9 +164,10 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         return _oracle;
     }
 
+    address private _admin;
+    
     function admin() external view override returns (address) {
-        // Return first admin - simplified
-        return getRoleMember(DEFAULT_ADMIN_ROLE, 0);
+        return _admin;
     }
 
     function MIN_RESERVE_RATIO() external view override returns (uint256) {
@@ -183,35 +191,5 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
 
     function auditReportCount() external view override returns (uint256) {
         return _auditReports.length;
-    }
-
-    // ============================================================
-    // Utility Functions
-    // ============================================================
-
-    function verifyProof(bytes calldata reportData) external view override returns (bool) {
-        if (_latestProofHash == bytes32(0)) return false;
-        return computeProofHash(reportData) == _latestProofHash;
-    }
-
-    // ============================================================
-    // Pause Control (for emergency)
-    // ============================================================
-
-    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _pause();
-    }
-
-    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _unpause();
-    }
-
-    // ============================================================
-    // Helper: get role member by index
-    // ============================================================
-    // In production, use EnumerableSet from OpenZeppelin
-    function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
-        // Simplified - would need EnumerableSet in production
-        return address(0);
     }
 }

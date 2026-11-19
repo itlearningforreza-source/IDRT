@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IBridgeVault} from "../interfaces/IBridge.sol";
 import {IDRCToken} from "../token/IDRCToken.sol";
-import {AccessControl} from "../access/AccessControl.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Context} from "@openzeppelin/contracts/utils/Context.sol";
@@ -14,7 +14,7 @@ import {Context} from "@openzeppelin/contracts/utils/Context.sol";
  * @dev Implements burn-and-mint bridge model: burns on source, mints on destination
  */
 contract BridgeVault is IBridgeVault, AccessControl, ReentrancyGuard, Pausable {
-    function _msgSender() internal view override(Context, AccessControl) returns (address) {
+    function _msgSender() internal view override(Context) returns (address) {
         return msg.sender;
     }
     // ============================================================
@@ -26,7 +26,7 @@ contract BridgeVault is IBridgeVault, AccessControl, ReentrancyGuard, Pausable {
     // State Variables
     // ============================================================
     uint256 public immutable chainId;
-    address public immutable relayer;
+    address public relayer; // Changed from immutable to mutable for setRelayer
     uint256 private _nonce;
     mapping(uint256 => uint256) private _lockedAmounts;
     mapping(uint256 => bool) private _processedNonces;
@@ -53,8 +53,8 @@ contract BridgeVault is IBridgeVault, AccessControl, ReentrancyGuard, Pausable {
         chainId = chainId_;
         relayer = relayer_;
 
-        _setupRole(DEFAULT_ADMIN_ROLE, relayer_); // relayer is initial admin
-        _setupRole(RELAYER_ROLE, relayer_);
+        _grantRole(DEFAULT_ADMIN_ROLE, relayer_); // relayer is initial admin
+        _grantRole(RELAYER_ROLE, relayer_);
     }
 
     // ============================================================
@@ -110,7 +110,7 @@ contract BridgeVault is IBridgeVault, AccessControl, ReentrancyGuard, Pausable {
     // ============================================================
     // View Functions
     // ============================================================
-    // Note: chainId() and relayer() getters are auto-generated from public immutable variables
+    // Note: chainId() getter is auto-generated from public immutable variable
 
     function totalLocked() external view override returns (uint256) {
         return _totalLocked;
@@ -131,9 +131,8 @@ contract BridgeVault is IBridgeVault, AccessControl, ReentrancyGuard, Pausable {
     function setRelayer(address newRelayer) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (newRelayer == address(0)) revert ZeroAddress();
         _revokeRole(RELAYER_ROLE, relayer);
-        _setupRole(RELAYER_ROLE, newRelayer);
-        // Note: can't change immutable relayer, but role is updated
-        // In production, use a mutable variable or proxy pattern
+        _grantRole(RELAYER_ROLE, newRelayer);
+        relayer = newRelayer;
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {

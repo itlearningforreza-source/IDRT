@@ -5,7 +5,6 @@ import {Test, console} from "forge-std/Test.sol";
 import {BridgeRelayer} from "../contracts/bridge/BridgeRelayer.sol";
 import {IDRCToken} from "../contracts/token/IDRCToken.sol";
 import {IBridgeRelayer} from "../contracts/interfaces/IBridge.sol";
-import {AccessControl} from "../contracts/access/AccessControl.sol";
 
 contract BridgeRelayerTest is Test {
     BridgeRelayer relayerContract;

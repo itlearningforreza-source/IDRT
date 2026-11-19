@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {IBridgeRelayer} from "../interfaces/IBridge.sol";
 import {IDRCToken} from "../token/IDRCToken.sol";
-import {AccessControl} from "../access/AccessControl.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {Context} from "@openzeppelin/contracts/utils/Context.sol";
@@ -15,7 +15,7 @@ import {Context} from "@openzeppelin/contracts/utils/Context.sol";
  * This contract simulates the relayer logic for testing and single-relayer setups
  */
 contract BridgeRelayer is IBridgeRelayer, AccessControl, ReentrancyGuard, Pausable {
-    function _msgSender() internal view override(Context, AccessControl) returns (address) {
+    function _msgSender() internal view override(Context) returns (address) {
         return msg.sender;
     }
     // ============================================================
@@ -45,8 +45,8 @@ contract BridgeRelayer is IBridgeRelayer, AccessControl, ReentrancyGuard, Pausab
         require(relayer_ != address(0), "BridgeRelayer: zero relayer address");
 
         relayer = relayer_;
-        _setupRole(DEFAULT_ADMIN_ROLE, relayer_);
-        _setupRole(RELAYER_ADMIN_ROLE, relayer_);
+        _grantRole(DEFAULT_ADMIN_ROLE, relayer_);
+        _grantRole(RELAYER_ADMIN_ROLE, relayer_);
     }
 
     // ============================================================
@@ -96,7 +96,7 @@ contract BridgeRelayer is IBridgeRelayer, AccessControl, ReentrancyGuard, Pausab
     function setRelayer(address newRelayer) external onlyRole(RELAYER_ADMIN_ROLE) {
         if (newRelayer == address(0)) revert ZeroAddress();
         _revokeRole(RELAYER_ADMIN_ROLE, relayer);
-        _setupRole(RELAYER_ADMIN_ROLE, newRelayer);
+        _grantRole(RELAYER_ADMIN_ROLE, newRelayer);
         relayer = newRelayer;
         emit RelayerUpdated(relayer, newRelayer);
     }

@@ -73,7 +73,15 @@ contract DeployIDRC is Script {
         // 2. Deploy IDRCToken Implementation (with constructor args)
         // ============================================================
         console2.log("\n[2/7] Deploying IDRCToken implementation...");
-        IDRCToken tokenImpl = new IDRCToken(
+        IDRCToken tokenImpl = new IDRCToken();
+        console2.log("IDRCToken implementation deployed at:", address(tokenImpl));
+
+        // ============================================================
+        // 3. Deploy UUPS Proxy (no init data needed - implementation is already initialized)
+        // ============================================================
+        console2.log("\n[3/7] Deploying UUPS Proxy...");
+        bytes memory initData = abi.encodeWithSignature(
+            "initialize(string,string,address,address,address,address,address,address,uint256)",
             TOKEN_NAME,
             TOKEN_SYMBOL,
             deployer, // admin
@@ -84,13 +92,7 @@ contract DeployIDRC is Script {
             deployer, // blacklister
             SUPPLY_CAP
         );
-        console2.log("IDRCToken implementation deployed at:", address(tokenImpl));
-
-        // ============================================================
-        // 3. Deploy UUPS Proxy (no init data needed - implementation is already initialized)
-        // ============================================================
-        console2.log("\n[3/7] Deploying UUPS Proxy...");
-        UUPSProxy proxy = new UUPSProxy(address(tokenImpl), "");
+        UUPSProxy proxy = new UUPSProxy(address(tokenImpl), initData);
         console2.log("UUPS Proxy deployed at:", address(proxy));
 
         // Get token interface from proxy

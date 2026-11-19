@@ -7,7 +7,6 @@ import {MultisigWallet} from "../contracts/multisig/MultisigWallet.sol";
 import {ProofOfReserve} from "../contracts/reserve/ProofOfReserve.sol";
 import {BridgeVault} from "../contracts/bridge/BridgeVault.sol";
 import {BridgeRelayer} from "../contracts/bridge/BridgeRelayer.sol";
-import {AccessControl} from "../contracts/access/AccessControl.sol";
 
 contract IDRCTokenTest is Test {
     IDRCToken token;
@@ -15,8 +14,7 @@ contract IDRCTokenTest is Test {
     ProofOfReserve reserve;
     BridgeVault vault;
     BridgeRelayer relayer;
-    AccessControl accessControl;
-
+    
     address admin = address(0x1);
     address minter = address(0x2);
     address burner = address(0x3);
@@ -41,8 +39,7 @@ contract IDRCTokenTest is Test {
         reserve = new ProofOfReserve(admin, oracle);
         vault = new BridgeVault(1, relayerAddr);
         relayer = new BridgeRelayer(relayerAddr);
-        accessControl = new AccessControl();
-
+        
         // Grant roles to bridge contracts
         bytes32 MINTER_ROLE = token.MINTER_ROLE();
         bytes32 BURNER_ROLE = token.BURNER_ROLE();

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "../interfaces/IERC20.sol";
-import {AccessControl} from "../access/AccessControl.sol";
+import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
@@ -27,7 +27,7 @@ contract IDRCToken is
     UUPSUpgradeable,
     IERC20
 {
-    function _msgSender() internal view override(Context, AccessControl) returns (address) {
+    function _msgSender() internal view override(Context) returns (address) {
         return msg.sender;
     }
 
@@ -126,14 +126,14 @@ contract IDRCToken is
         }
 
         // AccessControl initialization - set DEFAULT_ADMIN_ROLE
-        _setupRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
 
         // Grant roles
-        _setupRole(MINTER_ROLE, minter);
-        _setupRole(PAUSER_ROLE, pauser);
-        _setupRole(UPGRADER_ROLE, upgrader);
-        _setupRole(BURNER_ROLE, burner);
-        _setupRole(BLACKLISTER_ROLE, blacklister);
+        _grantRole(MINTER_ROLE, minter);
+        _grantRole(PAUSER_ROLE, pauser);
+        _grantRole(UPGRADER_ROLE, upgrader);
+        _grantRole(BURNER_ROLE, burner);
+        _grantRole(BLACKLISTER_ROLE, blacklister);
 
         // Supply cap
         supplyCap = supplyCap_ > 0 ? supplyCap_ : 10_000_000_000 * 10**18; // Default 10B IDRC
@@ -302,7 +302,7 @@ contract IDRCToken is
     }
 
     // ============================================================
-    // EIP-2612 Permit
+    // EIP-2612 Permit (with low-s enforcement)
     // ============================================================
     function permit(
         address owner,
@@ -313,6 +313,10 @@ contract IDRCToken is
         bytes32 r,
         bytes32 s
     ) external {
+        // Low-s enforcement per EIP-2612
+        // secp256k1 curve order / 2 = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0
+        if (s > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) revert("ERC20Permit: invalid signature (high s)");
+
         // Standard EIP-2612 permit implementation
         bytes32 structHash = keccak256(
             abi.encode(PERMIT_TYPEHASH, owner, spender, value, _nonces[owner]++, deadline)

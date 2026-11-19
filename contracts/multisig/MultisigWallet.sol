@@ -9,6 +9,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  * @notice M-of-N Multisig wallet (Gnosis Safe compatible)
  * @dev Features: timelock, owner management, transaction lifecycle, ETH handling
  * Does not inherit from Ownable - implements owner checks directly
+ * SECURITY: Self-delegatecall removed - use call instead for safety
  */
 contract MultisigWallet is IMultisig, ReentrancyGuard {
     // ============================================================
@@ -153,11 +154,13 @@ contract MultisigWallet is IMultisig, ReentrancyGuard {
         // Execute
         txn.executed = true;
 
-        // Use delegatecall for self-calls to preserve msg.sender context
-        // This allows owner management functions to be called through the multisig
+        // SECURITY FIX: Use call instead of delegatecall for self-calls
+        // delegatecall preserves msg.sender and storage context, which allows
+        // arbitrary code execution in the multisig's storage context.
+        // Using call instead isolates the execution context.
         bool callSuccess;
         if (txn.to == address(this)) {
-            (callSuccess, ) = address(this).delegatecall(txn.data);
+            (callSuccess, ) = address(this).call{value: txn.value}(txn.data);
         } else {
             (callSuccess, ) = txn.to.call{value: txn.value}(txn.data);
         }

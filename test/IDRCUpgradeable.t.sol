@@ -10,7 +10,6 @@ import {BridgeVault} from "../contracts/bridge/BridgeVault.sol";
 import {BridgeRelayer} from "../contracts/bridge/BridgeRelayer.sol";
 import {UUPSProxy} from "../contracts/proxy/UUPSProxy.sol";
 import {ProxyAdmin} from "../contracts/proxy/ProxyAdmin.sol";
-import {AccessControl} from "../contracts/access/AccessControl.sol";
 
 contract IDRCUpgradeableTest is Test {
     IDRCToken token;

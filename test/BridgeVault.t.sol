@@ -5,7 +5,6 @@ import {Test, console} from "forge-std/Test.sol";
 import {BridgeVault} from "../contracts/bridge/BridgeVault.sol";
 import {IDRCToken} from "../contracts/token/IDRCToken.sol";
 import {IBridgeVault} from "../contracts/interfaces/IBridge.sol";
-import {AccessControl} from "../contracts/access/AccessControl.sol";
 
 contract BridgeVaultTest is Test {
     BridgeVault vault;

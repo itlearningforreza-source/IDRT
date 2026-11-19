@@ -5,15 +5,13 @@ import {Test, console} from "forge-std/Test.sol";
 import {ProofOfReserve} from "../contracts/reserve/ProofOfReserve.sol";
 import {IDRCToken} from "../contracts/token/IDRCToken.sol";
 import {MultisigWallet} from "../contracts/multisig/MultisigWallet.sol";
-import {AccessControl} from "../contracts/access/AccessControl.sol";
 import {IProofOfReserve} from "../contracts/interfaces/IReserve.sol";
 
 contract ProofOfReserveTest is Test {
     ProofOfReserve reserve;
     IDRCToken token;
     MultisigWallet multisig;
-    AccessControl accessControl;
-
+    
     address admin = address(0x1);
     address oracle = address(0x2);
     address auditor = address(0x3);
@@ -27,11 +25,8 @@ contract ProofOfReserveTest is Test {
         multisig = new MultisigWallet(signers, 2, 3600);
 
         // Deploy access control (constructor sets admin)
-        accessControl = new AccessControl();
-
-        // Grant oracle role
-        bytes32 ORACLE_ROLE = keccak256("ORACLE_ROLE");
-        accessControl.grantRole(ORACLE_ROLE, oracle);
+        
+        // Oracle role is granted in constructor
 
         // Deploy reserve (constructor takes admin and oracle)
         reserve = new ProofOfReserve(admin, oracle);
