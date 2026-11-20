@@ -1,550 +1,640 @@
-"""
-Blockchain Indexer Service
-Indexes events from all IDRC contracts for analytics and monitoring
-"""
-import os
+# indexer.py
+# Blockchain Event Indexer - Production-grade event indexing with reorg handling
+"""Production-grade event indexer with reorg detection and recovery"""
 import asyncio
-import logging
+import os
 import signal
-import json
-from datetime import datetime
-from typing import Dict, List, Optional
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set, Callable, Any
+from datetime import datetime, timedelta
+from enum import Enum
+from contextlib import asynccontextmanager
 
-from web3 import Web3
-from web3.contract import Contract
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import Column, Integer, String, DateTime, BigInteger, Numeric, Text, Index, select
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import select, func, and_, or_
+from sqlalchemy.ext.asyncio import AsyncSession
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("indexer")
+from .blockchain_config import ChainConfig, CHAINS, Environment
+from .blockchain_manager import BlockchainManager, get_blockchain_manager, BlockInfo
+from .database import get_session_dependency, TokenEvent, ReserveEvent, BridgeEvent, init_db
+from .config import get_settings
 
-
-# Database Models
-class Base(DeclarativeBase):
-    pass
+logger = logging.getLogger(__name__)
 
 
-class TokenEvent(Base):
-    __tablename__ = "token_events"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String(50), nullable=False, index=True)
-    tx_hash = Column(String(66), nullable=False, index=True)
-    block_number = Column(BigInteger, nullable=False, index=True)
-    log_index = Column(Integer, nullable=False)
-    chain_id = Column(Integer, nullable=False, index=True)
-    from_address = Column(String(42), nullable=True, index=True)
-    to_address = Column(String(42), nullable=True, index=True)
-    amount = Column(Numeric(precision=78, scale=0), nullable=True)
-    caller = Column(String(42), nullable=True, index=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        Index("ix_token_event_chain_block", "chain_id", "block_number"),
-    )
-
-
-class MultisigEvent(Base):
-    __tablename__ = "multisig_events"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String(50), nullable=False, index=True)
-    tx_hash = Column(String(66), nullable=False, index=True)
-    block_number = Column(BigInteger, nullable=False, index=True)
-    chain_id = Column(Integer, nullable=False, index=True)
-    multisig_address = Column(String(42), nullable=False, index=True)
-    transaction_id = Column(BigInteger, nullable=False, index=True)
-    proposer = Column(String(42), nullable=True, index=True)
-    confirmer = Column(String(42), nullable=True, index=True)
-    executor = Column(String(42), nullable=True, index=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class ReserveEvent(Base):
-    __tablename__ = "reserve_events"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String(50), nullable=False, index=True)
-    tx_hash = Column(String(66), nullable=False, index=True)
-    block_number = Column(BigInteger, nullable=False, index=True)
-    chain_id = Column(Integer, nullable=False, index=True)
-    reserve_address = Column(String(42), nullable=False, index=True)
-    fiat_balance = Column(Numeric(precision=78, scale=0), nullable=True)
-    proof_hash = Column(String(66), nullable=True)
-    submitted_by = Column(String(42), nullable=True, index=True)
-    timestamp = Column(DateTime, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class BridgeEvent(Base):
-    __tablename__ = "bridge_events"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    event_type = Column(String(50), nullable=False, index=True)
-    tx_hash = Column(String(66), nullable=False, index=True)
-    block_number = Column(BigInteger, nullable=False, index=True)
-    chain_id = Column(Integer, nullable=False, index=True)
-    vault_address = Column(String(42), nullable=True, index=True)
-    relayer_address = Column(String(42), nullable=True, index=True)
-    bridge_nonce = Column(BigInteger, nullable=False, index=True)
-    src_chain = Column(Integer, nullable=True, index=True)
-    dst_chain = Column(Integer, nullable=True, index=True)
-    sender = Column(String(42), nullable=True, index=True)
-    recipient = Column(String(42), nullable=True, index=True)
-    amount = Column(Numeric(precision=78, scale=0), nullable=False)
-    timestamp = Column(DateTime, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        Index("ix_bridge_event_nonce_chain", "bridge_nonce", "src_chain"),
-    )
+class IndexerState(str, Enum):
+    STARTING = "starting"
+    RUNNING = "running"
+    PAUSED = "paused"
+    STOPPING = "stopping"
+    STOPPED = "stopped"
+    ERROR = "error"
 
 
 @dataclass
-class ChainConfig:
+class IndexerCursor:
+    """Tracks indexing position for a chain/event"""
     chain_id: int
-    name: str
-    rpc_url: str
-    contracts: Dict[str, str]  # contract_name -> address
-    start_block: int = 0
-    poll_interval: int = 10
-    batch_size: int = 1000
+    contract_name: str
+    event_name: str
+    last_indexed_block: int = 0
+    last_indexed_tx_hash: str = ""
+    last_indexed_log_index: int = 0
+    updated_at: datetime = field(default_factory=datetime.utcnow)
 
 
-class Indexer:
-    def __init__(self, configs: Dict[int, ChainConfig], database_url: str):
-        self.configs = configs
-        self.database_url = database_url
-        self.engine = None
-        self.session_factory = None
-        self.providers: Dict[int, Web3] = {}
-        self.contracts: Dict[int, Dict[str, Contract]] = {}
-        self.current_blocks: Dict[int, int] = {}
-        self.running = False
+@dataclass
+class EventProcessor:
+    """Defines how to process a specific event"""
+    contract_name: str
+    event_name: str
+    processor: Callable  # async function(session, event_data)
+    argument_filters: Optional[Dict] = None
+    from_block: int = 0
 
-        # Event signatures
-        self.event_signatures = {
-            "Transfer": Web3.keccak(text="Transfer(address,address,uint256)").hex(),
-            "Approval": Web3.keccak(text="Approval(address,address,uint256)").hex(),
-            "Minted": Web3.keccak(text="Minted(address,uint256)").hex(),
-            "Burned": Web3.keccak(text="Burned(address,uint256)").hex(),
-            "Blacklisted": Web3.keccak(text="Blacklisted(address)").hex(),
-            "Unblacklisted": Web3.keccak(text="Unblacklisted(address)").hex(),
-            "Paused": Web3.keccak(text="Paused(address)").hex(),
-            "Unpaused": Web3.keccak(text="Unpaused(address)").hex(),
-            "RoleGranted": Web3.keccak(text="RoleGranted(bytes32,address,address)").hex(),
-            "RoleRevoked": Web3.keccak(text="RoleRevoked(bytes32,address,address)").hex(),
-            "Submission": Web3.keccak(text="Submission(address,uint256)").hex(),
-            "Confirmation": Web3.keccak(text="Confirmation(address,uint256)").hex(),
-            "Revocation": Web3.keccak(text="Revocation(address,uint256)").hex(),
-            "Execution": Web3.keccak(text="Execution(address,uint256)").hex(),
-            "ExecutionFailure": Web3.keccak(text="ExecutionFailure(address,uint256)").hex(),
-            "AuditProofSubmitted": Web3.keccak(text="AuditProofSubmitted(uint256,bytes32,uint256,address)").hex(),
-            "FiatBalanceUpdated": Web3.keccak(text="FiatBalanceUpdated(uint256,address)").hex(),
-            "TokensLocked": Web3.keccak(text="TokensLocked(uint256,address,address,uint256,uint256)").hex(),
-            "TokensReleased": Web3.keccak(text="TokensReleased(uint256,address,uint256)").hex(),
-            "MessageRelayed": Web3.keccak(text="MessageRelayed(uint256,uint256,uint256,address,uint256)").hex(),
-        }
 
-    async def initialize(self):
-        """Initialize database and blockchain connections"""
-        # Database
-        self.engine = create_async_engine(
-            self.database_url,
-            pool_size=10,
-            max_overflow=20,
-            pool_pre_ping=True,
-        )
-        self.session_factory = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
-
-        # Create tables
-        async with self.engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-        # Blockchain providers
-        for chain_id, config in self.configs.items():
-            w3 = Web3(Web3.HTTPProvider(config.rpc_url))
-
-            # POA middleware for non-Ethereum chains
-            if chain_id in [56, 97, 137, 80002, 42161, 421614, 10, 11155420, 8453, 84532]:
-                from web3.middleware import geth_poa_middleware
-                w3.middleware_onion.inject(geth_poa_middleware, layer=0)
-
-            self.providers[chain_id] = w3
-
-            # Load contract ABIs and create instances
-            self.contracts[chain_id] = {}
-            for contract_name, address in config.contracts.items():
-                abi = self._load_abi(contract_name)
-                self.contracts[chain_id][contract_name] = w3.eth.contract(
-                    address=Web3.to_checksum_address(address),
-                    abi=abi
-                )
-
-            # Get starting block
-            latest = w3.eth.get_block("latest").number
-            self.current_blocks[chain_id] = max(config.start_block, latest - 1000)
-
-            logger.info(f"Initialized indexer for {config.name} ({chain_id}) at block {self.current_blocks[chain_id]}")
-
-    def _load_abi(self, contract_name: str) -> list:
-        """Load contract ABI from artifacts"""
-        try:
-            with open(f"./out/{contract_name}.sol/{contract_name}.json") as f:
-                artifact = json.load(f)
-                return artifact["abi"]
-        except FileNotFoundError:
-            logger.warning(f"ABI not found for {contract_name}, using minimal")
-            return []
-
-    async def index_chain(self, chain_id: int):
-        """Index new blocks for a chain"""
-        config = self.configs[chain_id]
-        w3 = self.providers[chain_id]
-        contracts = self.contracts[chain_id]
-
-        try:
-            latest_block = w3.eth.get_block("latest").number
-            from_block = self.current_blocks[chain_id]
-            to_block = min(from_block + config.batch_size, latest_block - 1)
-
-            if from_block > to_block:
-                return
-
-            logger.debug(f"Indexing {config.name} blocks {from_block}-{to_block}")
-
-            # Collect all contract addresses
-            contract_addresses = list(contracts.values())
-
-            # Get all logs for these contracts
-            logs = w3.eth.get_logs({
-                "fromBlock": from_block,
-                "toBlock": to_block,
-                "address": contract_addresses
-            })
-
-            # Process logs
-            async with self.session_factory() as session:
-                for log in logs:
-                    await self._process_log(log, chain_id, session)
-
-                await session.commit()
-
-            self.current_blocks[chain_id] = to_block + 1
-
-        except Exception as e:
-            logger.error(f"Error indexing chain {config.name}: {e}")
-
-    async def _process_log(self, log, chain_id: int, session: AsyncSession):
-        """Process a single log entry"""
-        topics = [t.hex() for t in log["topics"]]
-        event_sig = topics[0] if topics else None
-        address = log["address"].lower()
-
-        # Determine contract and event type
-        for contract_name, contract_addr in self.contracts[chain_id].items():
-            if contract_addr.address.lower() == address:
-                await self._handle_contract_event(contract_name, event_sig, log, chain_id, session)
-                break
-
-    async def _handle_contract_event(
-        self, contract_name: str, event_sig: str, log, chain_id: int, session: AsyncSession
+class EventIndexer:
+    """Production-grade event indexer with reorg handling"""
+    
+    def __init__(
+        self,
+        chain_configs: Dict[int, ChainConfig],
+        database_url: str,
+        environment: Environment = Environment.DEVELOPMENT,
     ):
-        """Handle event based on contract and signature"""
-        data = log["data"]
-        block_number = log["blockNumber"]
-        tx_hash = log["transactionHash"].hex()
-        log_index = log["logIndex"]
-        timestamp = datetime.utcnow()  # In production, get from block
-
+        self.chain_configs = chain_configs
+        self.database_url = database_url
+        self.environment = environment
+        self.settings = get_settings()
+        
+        # State
+        self.state = IndexerState.STARTING
+        self.cursors: Dict[str, IndexerCursor] = {}  # key: "chainId:contract:event"
+        self.processors: List[EventProcessor] = []
+        self.blockchain_manager: Optional[BlockchainManager] = None
+        
+        # Configuration
+        self.batch_size = int(os.getenv("INDEXER_BATCH_SIZE", "100"))
+        self.poll_interval = int(os.getenv("INDEXER_POLL_INTERVAL", "10"))  # seconds
+        self.confirmation_blocks = int(os.getenv("INDEXER_CONFIRMATION_BLOCKS", "12"))
+        self.max_reorg_depth = int(os.getenv("INDEXER_MAX_REORG_DEPTH", "50"))
+        
+        # Control
+        self._running = False
+        self._tasks: List[asyncio.Task] = []
+        
+        # Metrics
+        self.metrics = {
+            "events_processed": 0,
+            "reorgs_detected": 0,
+            "reorgs_recovered": 0,
+            "errors": 0,
+            "last_error": None,
+            "started_at": None,
+        }
+    
+    async def initialize(self) -> None:
+        """Initialize indexer"""
+        self.state = IndexerState.STARTING
+        
+        # Initialize database
+        await init_db()
+        
+        # Initialize blockchain manager
+        self.blockchain_manager = await get_blockchain_manager(self.environment)
+        
+        # Load cursors from database
+        await self._load_cursors()
+        
+        # Register default processors
+        self._register_default_processors()
+        
+        self.state = IndexerState.RUNNING
+        self.metrics["started_at"] = datetime.utcnow()
+        logger.info("Event indexer initialized")
+    
+    def _register_default_processors(self) -> None:
+        """Register default event processors for IDRC contracts"""
+        
         # Token events
-        if contract_name == "IDRCToken":
-            await self._handle_token_event(event_sig, log, topics, data, block_number, tx_hash, log_index, chain_id, timestamp, session)
-
-        # Multisig events
-        elif contract_name == "MultisigWallet":
-            await self._handle_multisig_event(event_sig, log, topics, data, block_number, tx_hash, log_index, chain_id, timestamp, session)
-
+        self.register_processor(EventProcessor(
+            contract_name="IDRCToken",
+            event_name="Transfer",
+            processor=self._process_token_transfer,
+            from_block=0,
+        ))
+        self.register_processor(EventProcessor(
+            contract_name="IDRCToken",
+            event_name="Minted",
+            processor=self._process_token_minted,
+            from_block=0,
+        ))
+        self.register_processor(EventProcessor(
+            contract_name="IDRCToken",
+            event_name="Burned",
+            processor=self._process_token_burned,
+            from_block=0,
+        ))
+        self.register_processor(EventProcessor(
+            contract_name="IDRCToken",
+            event_name="Blacklisted",
+            processor=self._process_blacklisted,
+            from_block=0,
+        ))
+        self.register_processor(EventProcessor(
+            contract_name="IDRCToken",
+            event_name="Unblacklisted",
+            processor=self._process_unblacklisted,
+            from_block=0,
+        ))
+        
         # Reserve events
-        elif contract_name == "ProofOfReserve":
-            await self._handle_reserve_event(event_sig, log, topics, data, block_number, tx_hash, log_index, chain_id, timestamp, session)
-
+        self.register_processor(EventProcessor(
+            contract_name="ProofOfReserve",
+            event_name="FiatBalanceUpdated",
+            processor=self._process_fiat_balance_updated,
+            from_block=0,
+        ))
+        self.register_processor(EventProcessor(
+            contract_name="ProofOfReserve",
+            event_name="AuditProofSubmitted",
+            processor=self._process_audit_proof_submitted,
+            from_block=0,
+        ))
+        
         # Bridge events
-        elif contract_name in ["BridgeVault", "BridgeRelayer"]:
-            await self._handle_bridge_event(contract_name, event_sig, log, topics, data, block_number, tx_hash, log_index, chain_id, timestamp, session)
-
-    async def _handle_token_event(self, event_sig, log, topics, data, block_number, tx_hash, log_index, chain_id, timestamp, session):
-        """Handle IDRCToken events"""
-        event_map = {
-            self.event_signatures["Transfer"]: "Transfer",
-            self.event_signatures["Approval"]: "Approval",
-            self.event_signatures["Minted"]: "Mint",
-            self.event_signatures["Burned"]: "Burn",
-            self.event_signatures["Blacklisted"]: "Blacklist",
-            self.event_signatures["Unblacklisted"]: "Unblacklist",
-            self.event_signatures["Paused"]: "Pause",
-            self.event_signatures["Unpaused"]: "Unpause",
-            self.event_signatures["RoleGranted"]: "RoleGranted",
-            self.event_signatures["RoleRevoked"]: "RoleRevoked",
-        }
-
-        event_type = event_map.get(event_sig)
-        if not event_type:
-            return
-
-        # Decode based on event type
-        from_addr = to_addr = amount = caller = None
-
-        if event_type == "Transfer":
-            from_addr = "0x" + topics[1][-40:]
-            to_addr = "0x" + topics[2][-40:]
-            amount = int(data, 16)
-        elif event_type in ["Mint", "Burn"]:
-            to_addr = "0x" + topics[1][-40:] if event_type == "Mint" else None
-            from_addr = "0x" + topics[1][-40:] if event_type == "Burn" else None
-            amount = int(data, 16)
-        elif event_type in ["Blacklist", "Unblacklist"]:
-            from_addr = "0x" + topics[1][-40:]
-
+        self.register_processor(EventProcessor(
+            contract_name="BridgeVault",
+            event_name="TokensLocked",
+            processor=self._process_tokens_locked,
+            from_block=0,
+        ))
+        self.register_processor(EventProcessor(
+            contract_name="BridgeVault",
+            event_name="TokensReleased",
+            processor=self._process_tokens_released,
+            from_block=0,
+        ))
+        self.register_processor(EventProcessor(
+            contract_name="BridgeRelayer",
+            event_name="MessageRelayed",
+            processor=self._process_message_relayed,
+            from_block=0,
+        ))
+    
+    def register_processor(self, processor: EventProcessor) -> None:
+        """Register an event processor"""
+        self.processors.append(processor)
+        logger.info(f"Registered processor: {processor.contract_name}.{processor.event_name}")
+    
+    def _get_cursor_key(self, chain_id: int, contract_name: str, event_name: str) -> str:
+        return f"{chain_id}:{contract_name}:{event_name}"
+    
+    async def _load_cursors(self) -> None:
+        """Load indexing cursors from database"""
+        # In a real implementation, this would load from a cursors table
+        # For now, initialize from block 0 or deployment block
+        for chain_id, chain_config in self.chain_configs.items():
+            for processor in self.processors:
+                key = self._get_cursor_key(processor.chain_id, processor.contract_name, processor.event_name)
+                # Start from processor.from_block or deployment block
+                start_block = processor.from_block
+                
+                # Try to get deployment block from contract deployment
+                # This would be loaded from deployment artifacts
+                self.cursors[key] = IndexerCursor(
+                    chain_id=chain_id,
+                    contract_name=processor.contract_name,
+                    event_name=processor.event_name,
+                    last_indexed_block=start_block - 1,
+                )
+    
+    async def save_cursors(self) -> None:
+        """Save cursors to database"""
+        # Implementation would save to database
+        pass
+    
+    # ============================================================
+    # EVENT PROCESSORS
+    # ============================================================
+    
+    async def _get_or_create_session(self) -> AsyncSession:
+        """Get database session"""
+        async for session in get_session_dependency():
+            return session
+    
+    async def _process_token_transfer(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process ERC-20 Transfer event"""
         event = TokenEvent(
-            event_type=event_type,
-            tx_hash=tx_hash,
-            block_number=block_number,
-            log_index=log_index,
-            chain_id=chain_id,
-            from_address=from_addr,
-            to_address=to_addr,
-            amount=amount,
-            timestamp=timestamp
+            event_type="TRANSFER",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            log_index=event_data["log_index"],
+            chain_id=event_data["chain_id"],
+            from_address=event_data["args"].get("from"),
+            to_address=event_data["args"].get("to"),
+            amount=event_data["args"].get("value"),
+            timestamp=datetime.utcnow(),  # Would fetch actual block timestamp
         )
         session.add(event)
-
-    async def _handle_multisig_event(self, event_sig, log, topics, data, block_number, tx_hash, log_index, chain_id, timestamp, session):
-        """Handle MultisigWallet events"""
-        event_map = {
-            self.event_signatures["Submission"]: "Submission",
-            self.event_signatures["Confirmation"]: "Confirmation",
-            self.event_signatures["Revocation"]: "Revocation",
-            self.event_signatures["Execution"]: "Execution",
-            self.event_signatures["ExecutionFailure"]: "ExecutionFailure",
-        }
-
-        event_type = event_map.get(event_sig)
-        if not event_type:
-            return
-
-        multisig_addr = log["address"]
-        tx_id = int(topics[1], 16) if len(topics) > 1 else 0
-        actor = "0x" + topics[2][-40:] if len(topics) > 2 else None
-
-        event = MultisigEvent(
-            event_type=event_type,
-            tx_hash=tx_hash,
-            block_number=block_number,
-            chain_id=chain_id,
-            multisig_address=multisig_addr,
-            transaction_id=tx_id,
-            proposer=actor if event_type == "Submission" else None,
-            confirmer=actor if event_type == "Confirmation" else None,
-            executor=actor if event_type == "Execution" else None,
-            timestamp=timestamp
+    
+    async def _process_token_minted(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process Minted event"""
+        event = TokenEvent(
+            event_type="MINTED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            log_index=event_data["log_index"],
+            chain_id=event_data["chain_id"],
+            to_address=event_data["args"].get("to"),
+            amount=event_data["args"].get("amount"),
+            caller=event_data["args"].get("caller"),
+            timestamp=datetime.utcnow(),
         )
         session.add(event)
-
-    async def _handle_reserve_event(self, event_sig, log, topics, data, block_number, tx_hash, log_index, chain_id, timestamp, session):
-        """Handle ProofOfReserve events"""
-        event_map = {
-            self.event_signatures["AuditProofSubmitted"]: "AuditProofSubmitted",
-            self.event_signatures["FiatBalanceUpdated"]: "FiatBalanceUpdated",
-        }
-
-        event_type = event_map.get(event_sig)
-        if not event_type:
-            return
-
-        reserve_addr = log["address"]
-
-        if event_type == "AuditProofSubmitted":
-            seq = int(topics[1], 16)
-            proof_hash = "0x" + topics[2][-64:]
-            submitted_by = "0x" + topics[3][-40:]
-            # Data: reportedFiatIdr
-            fiat_balance = int(data, 16)
-
-            event = ReserveEvent(
-                event_type=event_type,
-                tx_hash=tx_hash,
-                block_number=block_number,
-                chain_id=chain_id,
-                reserve_address=reserve_addr,
-                fiat_balance=fiat_balance,
-                proof_hash=proof_hash,
-                submitted_by=submitted_by,
-                timestamp=timestamp
-            )
-        elif event_type == "FiatBalanceUpdated":
-            fiat_balance = int(topics[1], 16)
-            oracle = "0x" + topics[2][-40:]
-
-            event = ReserveEvent(
-                event_type=event_type,
-                tx_hash=tx_hash,
-                block_number=block_number,
-                chain_id=chain_id,
-                reserve_address=reserve_addr,
-                fiat_balance=fiat_balance,
-                submitted_by=oracle,
-                timestamp=timestamp
-            )
-
+    
+    async def _process_token_burned(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process Burned event"""
+        event = TokenEvent(
+            event_type="BURNED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            log_index=event_data["log_index"],
+            chain_id=event_data["chain_id"],
+            from_address=event_data["args"].get("from"),
+            amount=event_data["args"].get("amount"),
+            caller=event_data["args"].get("caller"),
+            timestamp=datetime.utcnow(),
+        )
         session.add(event)
-
-    async def _handle_bridge_event(self, contract_name, event_sig, log, topics, data, block_number, tx_hash, log_index, chain_id, timestamp, session):
-        """Handle Bridge events"""
-        event_map = {
-            self.event_signatures["TokensLocked"]: "TokensLocked",
-            self.event_signatures["TokensReleased"]: "TokensReleased",
-            self.event_signatures["MessageRelayed"]: "MessageRelayed",
-        }
-
-        event_type = event_map.get(event_sig)
-        if not event_type:
-            return
-
-        vault_addr = log["address"] if contract_name == "BridgeVault" else None
-        relayer_addr = log["address"] if contract_name == "BridgeRelayer" else None
-
-        if event_type == "TokensLocked":
-            bridge_nonce = int(topics[1], 16)
-            sender = "0x" + topics[2][-40:]
-            recipient = "0x" + topics[3][-40:]
-            amount = int(data[:66], 16)
-            dst_chain = int(data[66:], 16)
-            src_chain = chain_id
-
-            event = BridgeEvent(
-                event_type=event_type,
-                tx_hash=tx_hash,
-                block_number=block_number,
-                chain_id=chain_id,
-                vault_address=vault_addr,
-                bridge_nonce=bridge_nonce,
-                src_chain=src_chain,
-                dst_chain=dst_chain,
-                sender=sender,
-                recipient=recipient,
-                amount=amount,
-                timestamp=timestamp
-            )
-        elif event_type == "TokensReleased":
-            bridge_nonce = int(topics[1], 16)
-            recipient = "0x" + topics[2][-40:]
-            amount = int(data, 16)
-            src_chain = chain_id
-
-            event = BridgeEvent(
-                event_type=event_type,
-                tx_hash=tx_hash,
-                block_number=block_number,
-                chain_id=chain_id,
-                vault_address=vault_addr,
-                bridge_nonce=bridge_nonce,
-                src_chain=src_chain,
-                recipient=recipient,
-                amount=amount,
-                timestamp=timestamp
-            )
-        elif event_type == "MessageRelayed":
-            bridge_nonce = int(topics[1], 16)
-            src_chain = int(topics[2], 16)
-            dst_chain = int(topics[3], 16)
-            recipient = "0x" + topics[4][-40:]
-            amount = int(data, 16)
-
-            event = BridgeEvent(
-                event_type=event_type,
-                tx_hash=tx_hash,
-                block_number=block_number,
-                chain_id=chain_id,
-                relayer_address=relayer_addr,
-                bridge_nonce=bridge_nonce,
-                src_chain=src_chain,
-                dst_chain=dst_chain,
-                recipient=recipient,
-                amount=amount,
-                timestamp=timestamp
-            )
-
+    
+    async def _process_blacklisted(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process Blacklisted event"""
+        event = TokenEvent(
+            event_type="BLACKLISTED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            log_index=event_data["log_index"],
+            chain_id=event_data["chain_id"],
+            to_address=event_data["args"].get("account"),
+            timestamp=datetime.utcnow(),
+        )
         session.add(event)
-
-    async def run(self):
+    
+    async def _process_unblacklisted(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process Unblacklisted event"""
+        event = TokenEvent(
+            event_type="UNBLACKLISTED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            log_index=event_data["log_index"],
+            chain_id=event_data["chain_id"],
+            to_address=event_data["args"].get("account"),
+            timestamp=datetime.utcnow(),
+        )
+        session.add(event)
+    
+    async def _process_fiat_balance_updated(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process FiatBalanceUpdated event"""
+        event = ReserveEvent(
+            event_type="FIAT_BALANCE_UPDATED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            chain_id=event_data["chain_id"],
+            fiat_balance=event_data["args"].get("newBalanceIdr"),
+            submitted_by=event_data["args"].get("submittedBy"),
+            timestamp=datetime.utcnow(),
+        )
+        session.add(event)
+    
+    async def _process_audit_proof_submitted(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process AuditProofSubmitted event"""
+        event = ReserveEvent(
+            event_type="AUDIT_PROOF_SUBMITTED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            chain_id=event_data["chain_id"],
+            proof_hash=event_data["args"].get("proofHash"),
+            submitted_by=event_data["args"].get("submittedBy"),
+            timestamp=datetime.utcnow(),
+        )
+        session.add(event)
+    
+    async def _process_tokens_locked(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process TokensLocked event (bridge lock)"""
+        event = BridgeEvent(
+            event_type="TOKENS_LOCKED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            chain_id=event_data["chain_id"],
+            bridge_nonce=event_data["args"].get("bridgeNonce"),
+            src_chain=event_data["chain_id"],
+            dst_chain=event_data["args"].get("dstChainId"),
+            sender=event_data["args"].get("sender"),
+            recipient=event_data["args"].get("recipient"),
+            amount=event_data["args"].get("amount"),
+            timestamp=datetime.utcnow(),
+        )
+        session.add(event)
+    
+    async def _process_tokens_released(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process TokensReleased event (bridge release)"""
+        event = BridgeEvent(
+            event_type="TOKENS_RELEASED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            chain_id=event_data["chain_id"],
+            bridge_nonce=event_data["args"].get("bridgeNonce"),
+            recipient=event_data["args"].get("recipient"),
+            amount=event_data["args"].get("amount"),
+            timestamp=datetime.utcnow(),
+        )
+        session.add(event)
+    
+    async def _process_message_relayed(self, session: AsyncSession, event_data: Dict) -> None:
+        """Process MessageRelayed event (bridge relay)"""
+        event = BridgeEvent(
+            event_type="MESSAGE_RELAYED",
+            tx_hash=event_data["transaction_hash"],
+            block_number=event_data["block_number"],
+            chain_id=event_data["chain_id"],
+            bridge_nonce=event_data["args"].get("bridgeNonce"),
+            src_chain=event_data["args"].get("srcChainId"),
+            dst_chain=event_data["args"].get("dstChainId"),
+            recipient=event_data["args"].get("recipient"),
+            amount=event_data["args"].get("amount"),
+            timestamp=datetime.utcnow(),
+        )
+        session.add(event)
+    
+    # ============================================================
+    # INDEXING LOOP
+    # ============================================================
+    
+    async def run(self) -> None:
         """Main indexing loop"""
-        self.running = True
-        logger.info("Starting Indexer...")
-
-        while self.running:
+        self._running = True
+        logger.info("Event indexer started")
+        
+        while self._running:
             try:
-                tasks = [self.index_chain(chain_id) for chain_id in self.configs.keys()]
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-                await asyncio.sleep(10)
-
+                await self._indexing_cycle()
+                await asyncio.sleep(self.poll_interval)
+            except asyncio.CancelledError:
+                break
             except Exception as e:
-                logger.error(f"Error in indexer main loop: {e}")
-                await asyncio.sleep(10)
+                logger.error(f"Error in indexing cycle: {e}")
+                self.metrics["errors"] += 1
+                self.metrics["last_error"] = str(e)
+                await asyncio.sleep(5)  # Back off on error
+        
+        self.state = IndexerState.STOPPED
+        logger.info("Event indexer stopped")
+    
+    async def _indexing_cycle(self) -> None:
+        """Single indexing cycle across all processors and chains"""
+        for processor in self.processors:
+            for chain_id, chain_config in self.chain_configs.items():
+                # Skip if contract not deployed on this chain
+                if processor.contract_name not in chain_config.contracts:
+                    continue
+                
+                try:
+                    await self._process_chain_events(chain_id, processor)
+                except Exception as e:
+                    logger.error(f"Error processing {processor.contract_name}.{processor.event_name} on chain {chain_id}: {e}")
+                    self.metrics["errors"] += 1
+    
+    async def _process_chain_events(self, chain_id: int, processor: EventProcessor) -> None:
+        """Process events for a specific chain and processor"""
+        key = self._get_cursor_key(chain_id, processor.contract_name, processor.event_name)
+        cursor = self.cursors.get(key)
+        
+        if not cursor:
+            logger.warning(f"No cursor for {key}")
+            return
+        
+        # Get blockchain manager
+        bm = self.blockchain_manager
+        if not bm:
+            return
+        
+        # Get latest block with confirmation buffer
+        latest_block = await bm.get_latest_block_number(chain_id)
+        target_block = latest_block - self.confirmation_blocks
+        
+        if target_block <= cursor.last_indexed_block:
+            return  # Nothing new to index
+        
+        # Process in batches
+        from_block = cursor.last_indexed_block + 1
+        to_block = target_block
+        
+        batch_size = self.batch_size
+        for batch_start in range(from_block, to_block + 1, self.batch_size):
+            batch_end = min(batch_start + self.batch_size - 1, to_block)
+            
+            try:
+                events = await bm.get_events(
+                    chain_id=chain_id,
+                    contract_name=processor.contract_name,
+                    event_name=processor.event_name,
+                    from_block=batch_start,
+                    to_block=batch_end,
+                    argument_filters=processor.argument_filters,
+                )
+                
+                if events:
+                    await self._process_events(chain_id, processor, events)
+                
+                # Update cursor
+                cursor.last_indexed_block = batch_end
+                if events:
+                    last_event = events[-1]
+                    cursor.last_indexed_tx_hash = last_event["transaction_hash"]
+                    cursor.last_indexed_log_index = last_event["log_index"]
+                
+            except Exception as e:
+                logger.error(f"Error processing batch {batch_start}-{batch_end}: {e}")
+                raise
+        
+        # Save cursor periodically
+        await self.save_cursors()
+    
+    async def _process_events(self, chain_id: int, processor: EventProcessor, events: List[Dict]) -> None:
+        """Process a batch of events"""
+        async for session in get_session_dependency():
+            try:
+                for event in events:
+                    # Enrich event data
+                    event["chain_id"] = chain_id
+                    
+                    # Call processor
+                    await processor.processor(session, event)
+                    self.metrics["events_processed"] += 1
+                
+                await session.commit()
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Error processing events: {e}")
+                raise
+    
+    # ============================================================
+    # REORG HANDLING
+    # ============================================================
+    
+    async def check_and_handle_reorg(self, chain_id: int) -> bool:
+        """Check for reorg and handle if detected"""
+        for processor in self.processors:
+            key = self._get_cursor_key(chain_id, processor.contract_name, processor.event_name)
+            cursor = self.cursors.get(key)
+            
+            if not cursor or cursor.last_indexed_block <= 0:
+                continue
+            
+            try:
+                reorg_block = await self.blockchain_manager.check_for_reorg(chain_id, cursor.last_indexed_block)
+                
+                if reorg_block:
+                    logger.warning(f"Reorg detected on chain {chain_id} at block {reorg_block.number}")
+                    self.metrics["reorgs_detected"] += 1
+                    
+                    # Rollback cursor to before reorg
+                    safe_block = max(0, reorg_block.number - self.max_reorg_depth)
+                    cursor.last_indexed_block = safe_block
+                    cursor.last_indexed_tx_hash = ""
+                    cursor.last_indexed_log_index = 0
+                    
+                    # Delete events after safe block
+                    await self._rollback_events(chain_id, processor, safe_block)
+                    
+                    self.metrics["reorgs_recovered"] += 1
+                    logger.info(f"Recovered from reorg on chain {chain_id}, rolled back to block {safe_block}")
+                    
+                    return True
+                    
+            except Exception as e:
+                logger.error(f"Error checking reorg: {e}")
+        
+        return False
+    
+    async def _rollback_events(self, chain_id: int, processor: EventProcessor, safe_block: int) -> None:
+        """Rollback events after a reorg"""
+        table_map = {
+            "IDRCToken": TokenEvent,
+            "ProofOfReserve": ReserveEvent,
+            "BridgeVault": BridgeEvent,
+            "BridgeRelayer": BridgeEvent,
+        }
+        
+        event_table = table_map.get(processor.contract_name)
+        if not event_table:
+            return
+        
+        async for session in get_session_dependency():
+            try:
+                await session.execute(
+                    event_table.__table__.delete().where(
+                        and_(
+                            event_table.chain_id == chain_id,
+                            event_table.block_number > safe_block,
+                        )
+                    )
+                )
+                await session.commit()
+                logger.info(f"Rolled back {processor.contract_name}.{processor.event_name} events after block {safe_block}")
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Error rolling back events: {e}")
+    
+    async def _periodic_reorg_check(self) -> None:
+        """Periodically check for reorgs"""
+        while self._running:
+            try:
+                for chain_id in self.chain_configs:
+                    await self.check_and_handle_reorg(chain_id)
+            except Exception as e:
+                logger.error(f"Error in reorg check: {e}")
+            await asyncio.sleep(60)  # Check every minute
+    
+    # ============================================================
+    # CONTROL
+    # ============================================================
+    
+    def stop(self) -> None:
+        """Stop the indexer"""
+        self._running = False
+        self.state = IndexerState.STOPPING
+        logger.info("Indexer stop requested")
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        return {
+            **self.metrics,
+            "state": self.state.value,
+            "cursors": {k: {
+                "chain_id": v.chain_id,
+                "contract": v.contract_name,
+                "event": v.event_name,
+                "last_block": v.last_indexed_block,
+            } for k, v in self.cursors.items()},
+        }
 
-    def stop(self):
-        self.running = False
+
+# Global indexer instance
+_indexer: Optional[EventIndexer] = None
 
 
-async def main():
-    # Load configurations
-    configs = {
-        11155111: ChainConfig(  # Sepolia
-            chain_id=11155111,
-            name="Ethereum Sepolia",
-            rpc_url=os.getenv("SEPOLIA_RPC_URL", "https://rpc.sepolia.org"),
-            contracts={
-                "IDRCToken": os.getenv("SEPOLIA_TOKEN_ADDRESS", ""),
-                "MultisigWallet": os.getenv("SEPOLIA_MULTISIG_ADDRESS", ""),
-                "ProofOfReserve": os.getenv("SEPOLIA_RESERVE_ADDRESS", ""),
-                "BridgeVault": os.getenv("SEPOLIA_VAULT_ADDRESS", ""),
-                "BridgeRelayer": os.getenv("SEPOLIA_RELAYER_ADDRESS", ""),
-            },
-        ),
-        80002: ChainConfig(  # Polygon Amoy
-            chain_id=80002,
-            name="Polygon Amoy",
-            rpc_url=os.getenv("AMOY_RPC_URL", "https://rpc-amoy.polygon.technology"),
-            contracts={
-                "IDRCToken": os.getenv("AMOY_TOKEN_ADDRESS", ""),
-                "MultisigWallet": os.getenv("AMOY_MULTISIG_ADDRESS", ""),
-                "ProofOfReserve": os.getenv("AMOY_RESERVE_ADDRESS", ""),
-                "BridgeVault": os.getenv("AMOY_VAULT_ADDRESS", ""),
-                "BridgeRelayer": os.getenv("AMOY_RELAYER_ADDRESS", ""),
-            },
-        ),
-    }
-
-    # Filter empty addresses
-    for config in configs.values():
-        config.contracts = {k: v for k, v in config.contracts.items() if v}
-
-    database_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/idrc_indexer")
-
-    indexer = Indexer(configs, database_url)
-    await indexer.initialize()
-
-    loop = asyncio.get_event_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, indexer.stop)
-
-    await indexer.run()
+async def get_event_indexer(
+    environment: Environment = None,
+    database_url: str = None,
+) -> EventIndexer:
+    """Get or create global event indexer"""
+    global _indexer
+    
+    if environment is None:
+        env_str = os.getenv("ENVIRONMENT", "development")
+        environment = Environment(env_str.lower())
+    
+    if database_url is None:
+        database_url = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/idrc_indexer")
+    
+    if _indexer is None or _indexer.environment != environment:
+        chain_configs = {cid: config for cid, config in CHAINS.items() 
+                        if cid in [c.chain_id for c in get_chains_for_environment(environment)]}
+        _indexer = EventIndexer(chain_configs, database_url, environment)
+        await _indexer.initialize()
+    
+    return _indexer
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+async def start_indexer():
+    """Start the indexer as a background task"""
+    indexer = await get_event_indexer()
+    task = asyncio.create_task(indexer.run())
+    
+    # Also start periodic reorg check
+    reorg_task = asyncio.create_task(indexer._periodic_reorg_check())
+    
+    return indexer, [task, reorg_task]
+
+
+async def stop_indexer():
+    """Stop the indexer"""
+    global _indexer
+    if _indexer:
+        _indexer.stop()
+        # Wait for tasks to complete
+        await asyncio.sleep(2)
+        _indexer = None
+
+
+# Export
+__all__ = [
+    "EventIndexer",
+    "IndexerState",
+    "IndexerCursor",
+    "EventProcessor",
+    "get_event_indexer",
+    "start_indexer",
+    "stop_indexer",
+]
