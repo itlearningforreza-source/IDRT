@@ -2,7 +2,7 @@
 Token router - ERC-20 token operations
 """
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_session_dependency
@@ -76,7 +76,9 @@ async def mint_tokens(
     """Mint new IDRC tokens (requires MINTER_ROLE)"""
     token = await get_token_contract(chain_id)
     service = TokenService(token, chain_id)
-    tx_hash = await service.mint(request.to, request.amount.to_wei(), request.caller)
+    # Caller is derived from authenticated user
+    caller = getattr(current_user, "address", current_user)
+    tx_hash = await service.mint(request.to, request.amount.to_wei(), caller)
     return TransactionResponse(tx_hash=tx_hash, status="PENDING")
 
 
@@ -90,7 +92,9 @@ async def burn_tokens(
     """Burn IDRC tokens from an address (requires BURNER_ROLE)"""
     token = await get_token_contract(chain_id)
     service = TokenService(token, chain_id)
-    tx_hash = await service.issuer_burn(request.from_address, request.amount.to_wei(), request.caller)
+    # Caller is derived from authenticated user
+    caller = getattr(current_user, "address", current_user)
+    tx_hash = await service.issuer_burn(request.from_address, request.amount.to_wei(), caller)
     return TransactionResponse(tx_hash=tx_hash, status="PENDING")
 
 
@@ -102,13 +106,15 @@ async def user_burn(
     session: AsyncSession = Depends(get_session_dependency),
 ):
     """Burn own IDRC tokens (any holder can call)"""
+    # Caller is derived from authenticated user
+    caller = getattr(current_user, "address", current_user)
     # Verify caller is burning their own tokens
-    if request.caller != request.from_address:
+    if caller != request.from_address:
         raise HTTPException(status_code=400, detail="Can only burn own tokens")
 
     token = await get_token_contract(chain_id)
     service = TokenService(token, chain_id)
-    tx_hash = await service.burn(request.amount.to_wei(), request.caller)
+    tx_hash = await service.burn(request.amount.to_wei(), caller)
     return TransactionResponse(tx_hash=tx_hash, status="PENDING")
 
 
@@ -120,13 +126,15 @@ async def transfer_tokens(
     session: AsyncSession = Depends(get_session_dependency),
 ):
     """Transfer IDRC tokens"""
+    # Caller is derived from authenticated user
+    caller = getattr(current_user, "address", current_user)
     # Verify caller is the sender
-    if request.caller != request.from_address:
+    if caller != request.from_address:
         raise HTTPException(status_code=400, detail="Caller must be sender")
 
     token = await get_token_contract(chain_id)
     service = TokenService(token, chain_id)
-    tx_hash = await service.transfer(request.to, request.amount.to_wei(), request.caller)
+    tx_hash = await service.transfer(request.to, request.amount.to_wei(), caller)
     return TransactionResponse(tx_hash=tx_hash, status="PENDING")
 
 
@@ -138,12 +146,14 @@ async def approve_spender(
     session: AsyncSession = Depends(get_session_dependency),
 ):
     """Approve spender allowance"""
-    if request.caller != request.owner:
-        raise HTTPException(status_code=400, detail="Caller must be owner")
+    # Caller is derived from authenticated user
+    caller = getattr(current_user, "address", current_user)
+    # Note: In approve, the owner is the caller, so we don't need owner field
+    # The request should just have spender and amount
 
     token = await get_token_contract(chain_id)
     service = TokenService(token, chain_id)
-    tx_hash = await service.approve(request.spender, request.amount.to_wei(), request.caller)
+    tx_hash = await service.approve(request.spender, request.amount.to_wei(), caller)
     return TransactionResponse(tx_hash=tx_hash, status="PENDING")
 
 

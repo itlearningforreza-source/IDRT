@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_session_dependency, User, APIKey, AuditLog
 from .models import Role, AddressStr
+from .config import get_settings
 
 
 # ============================================================
@@ -159,6 +160,7 @@ async def get_user_from_api_key(
 # ============================================================
 
 async def get_current_user_from_token(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     session: AsyncSession = Depends(get_session_dependency),
 ) -> User:
@@ -184,10 +186,13 @@ async def get_current_user_from_token(
             detail="User not found or inactive",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    request.state.user_id = str(user.id)
+    request.state.user_address = user.address
     return user
 
 
 async def get_current_user_from_api_key(
+    request: Request,
     api_key: str = Depends(api_key_header),
     session: AsyncSession = Depends(get_session_dependency),
 ) -> User:
@@ -203,6 +208,8 @@ async def get_current_user_from_api_key(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
         )
+    request.state.user_id = str(user.id)
+    request.state.user_address = user.address
     return user
 
 
@@ -210,7 +217,7 @@ async def get_current_user(
     request: Request,
     session: AsyncSession = Depends(get_session_dependency),
 ) -> User:
-    """Try token auth first, then API key"""
+    """Try token auth first, then API key. Sets user_id in request.state."""
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
@@ -219,6 +226,8 @@ async def get_current_user(
             if token_data.type == "access":
                 user = await get_user_by_address(session, token_data.sub)
                 if user and user.is_active:
+                    request.state.user_id = str(user.id)
+                    request.state.user_address = user.address
                     return user
         except HTTPException:
             pass
@@ -227,6 +236,8 @@ async def get_current_user(
     if api_key:
         user = await get_user_from_api_key(session, api_key)
         if user:
+            request.state.user_id = str(user.id)
+            request.state.user_address = user.address
             return user
 
     raise HTTPException(

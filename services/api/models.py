@@ -114,13 +114,11 @@ class IDRCAmount(Decimal):
 class TokenMintRequest(BaseModel):
     to: AddressStr = Field(..., description="Recipient address")
     amount: IDRCAmount = Field(..., gt=0, description="Amount in IDRC")
-    caller: AddressStr = Field(..., description="Caller address (must have MINTER_ROLE)")
 
 
 class TokenBurnRequest(BaseModel):
     from_address: AddressStr = Field(..., alias="from", description="Address to burn from")
     amount: IDRCAmount = Field(..., gt=0, description="Amount in IDRC")
-    caller: AddressStr = Field(..., description="Caller address (must have BURNER_ROLE)")
 
 
 class TokenTransferRequest(BaseModel):
@@ -132,7 +130,6 @@ class TokenTransferRequest(BaseModel):
 class TokenApproveRequest(BaseModel):
     spender: AddressStr = Field(..., description="Spender address")
     amount: IDRCAmount = Field(..., ge=0, description="Amount in IDRC")
-    caller: AddressStr = Field(..., description="Owner address")
 
 
 class TokenPermitRequest(BaseModel):
@@ -149,30 +146,25 @@ class MultisigProposeRequest(BaseModel):
     to: AddressStr
     value: str = Field(default="0", description="ETH value in wei")
     data: str = Field(default="0x", description="Calldata")
-    caller: AddressStr = Field(..., description="Proposer address (must be owner)")
     description: Optional[str] = None
 
 
 class MultisigConfirmRequest(BaseModel):
     transaction_id: int = Field(..., ge=0)
-    caller: AddressStr = Field(..., description="Confirmer address (must be owner)")
 
 
 class MultisigExecuteRequest(BaseModel):
     transaction_id: int = Field(..., ge=0)
-    caller: AddressStr = Field(..., description="Executor address (must be owner)")
 
 
 class RoleGrantRequest(BaseModel):
     role: Role
     account: AddressStr
-    caller: AddressStr = Field(..., description="Caller address (must have DEFAULT_ADMIN_ROLE)")
 
 
 class RoleRevokeRequest(BaseModel):
     role: Role
     account: AddressStr
-    caller: AddressStr = Field(..., description="Caller address (must have DEFAULT_ADMIN_ROLE)")
 
 
 class PauseRequest(BaseModel):
@@ -187,12 +179,10 @@ class BlacklistRequest(BaseModel):
 class ReserveProofRequest(BaseModel):
     proof_hash: str = Field(..., pattern=r"^0x[0-9a-fA-F]{64}$", description="SHA-256 hash of audit report")
     reported_fiat_idr: IDRCAmount = Field(..., gt=0, description="Reported fiat balance in IDR")
-    caller: AddressStr = Field(..., description="Caller address (must have AUDITOR_ROLE)")
 
 
 class ReserveOracleUpdateRequest(BaseModel):
     new_balance_idr: IDRCAmount = Field(..., ge=0, description="New fiat balance in IDR")
-    caller: AddressStr = Field(..., description="Caller address (must have ORACLE_ROLE)")
 
 
 class BridgeTransferRequest(BaseModel):
@@ -201,7 +191,6 @@ class BridgeTransferRequest(BaseModel):
     sender: AddressStr
     recipient: AddressStr
     amount: IDRCAmount = Field(..., gt=0)
-    caller: AddressStr = Field(..., description="Caller address (must have RELAYER_ROLE)")
 
 
 class BridgeCompleteRequest(BaseModel):
@@ -210,7 +199,6 @@ class BridgeCompleteRequest(BaseModel):
     dst_chain: ChainId
     recipient: AddressStr
     amount: IDRCAmount = Field(..., gt=0)
-    caller: AddressStr = Field(..., description="Caller address (must have RELAYER_ADMIN_ROLE)")
 
 
 class UpgradeRequest(BaseModel):

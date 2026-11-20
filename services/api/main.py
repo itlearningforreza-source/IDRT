@@ -15,9 +15,23 @@ import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+
 from .database import init_db, close_db
 from .auth import get_current_user, require_roles
 from .routers import token, multisig, reserve, bridge, admin, health, ledger
+from .config import get_settings
+from .middleware.rate_limiter import rate_limit_middleware, init_rate_limiter, close_rate_limiter
+from .middleware.idempotency import IdempotencyMiddleware, init_idempotency_store, close_idempotency_store
+from .middleware.correlation import CorrelationIDMiddleware
 from .models import User
 
 # Configure logging
@@ -45,6 +59,8 @@ if sentry_dsn:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
+    settings = get_settings()
+    
     # Startup
     logger.info("Starting IDRC API...")
     await init_db()
@@ -53,47 +69,71 @@ async def lifespan(app: FastAPI):
     from .blockchain import init_blockchain
     await init_blockchain()
 
+    # Initialize rate limiter
+    if settings.RATE_LIMIT_ENABLED:
+        await init_rate_limiter(settings.REDIS_URL)
+        logger.info("Rate limiter initialized")
+    
+    # Initialize idempotency store
+    if settings.IDEMPOTENCY_ENABLED:
+        await init_idempotency_store(settings.REDIS_URL)
+        logger.info("Idempotency store initialized")
+
     logger.info("IDRC API started successfully")
     yield
 
     # Shutdown
     logger.info("Shutting down IDRC API...")
     await close_db()
+    await close_rate_limiter()
+    await close_idempotency_store()
     logger.info("IDRC API shut down complete")
 
 
+settings = get_settings()
+
 app = FastAPI(
-    title="IDRC API",
-    description="Production API for IDR Coin (IDRC) Stablecoin System",
-    version="1.0.0",
-    docs_url="/docs" if os.getenv("ENVIRONMENT") != "production" else None,
-    redoc_url="/redoc" if os.getenv("ENVIRONMENT") != "production" else None,
-    openapi_url="/openapi.json" if os.getenv("ENVIRONMENT") != "production" else None,
+    title=settings.API_TITLE,
+    description=settings.API_DESCRIPTION,
+    version=settings.APP_VERSION,
+    docs_url="/docs" if not settings.is_production() else None,
+    redoc_url="/redoc" if not settings.is_production() else None,
+    openapi_url="/openapi.json" if not settings.is_production() else None,
     lifespan=lifespan,
 )
 
 # Security middleware
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    allowed_hosts=settings.ALLOWED_HOSTS
 )
+
+# Correlation ID middleware (first - for tracing)
+app.add_middleware(CorrelationIDMiddleware, header_name=settings.CORRELATION_HEADER_NAME)
+
+# Idempotency middleware (early - for financial operations)
+if settings.IDEMPOTENCY_ENABLED:
+    app.add_middleware(IdempotencyMiddleware)
+
+# Rate limiting middleware (early - before processing)
+if settings.RATE_LIMIT_ENABLED:
+    app.middleware("http")(rate_limit_middleware)
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+    allow_methods=settings.CORS_ALLOW_METHODS,
+    allow_headers=settings.CORS_ALLOW_HEADERS,
 )
 
 # Prometheus metrics
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 # Static files for frontend
-static_dir = os.getenv("STATIC_DIR", "static")
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+if os.path.exists(settings.STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 
 
 # Exception handlers
