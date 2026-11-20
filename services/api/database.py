@@ -9,8 +9,10 @@ from typing import AsyncGenerator, Optional
 
 from sqlalchemy import (
     Column, Integer, String, DateTime, Boolean, Text, BigInteger, Numeric,
-    ForeignKey, Index, UniqueConstraint, select, func
+    ForeignKey, Index, UniqueConstraint, select, func, Date, CheckConstraint
 )
+import enum
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.ext.asyncio import (
     AsyncSession, async_sessionmaker, create_async_engine, AsyncEngine
 )
@@ -202,6 +204,163 @@ class Alert(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     resolved_at = Column(DateTime, nullable=True)
 
+
+
+# ============================================================
+# Financial Ledger Models (Double-Entry Accounting)
+# ============================================================
+
+class AccountType(enum.Enum):
+    ASSET = "ASSET"
+    LIABILITY = "LIABILITY"
+    EQUITY = "EQUITY"
+    REVENUE = "REVENUE"
+    EXPENSE = "EXPENSE"
+
+
+class EntryStatus(enum.Enum):
+    DRAFT = "DRAFT"
+    POSTED = "POSTED"
+    REVERSED = "REVERSED"
+
+
+class Account(Base):
+    """Chart of Accounts - Double-entry accounting accounts"""
+    __tablename__ = "accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String(20), unique=True, nullable=False, index=True)  # e.g., '1010', '2010', '3010'
+    name = Column(String(100), nullable=False)
+    type = Column(SQLEnum(AccountType), nullable=False, index=True)
+    currency = Column(String(3), nullable=False, default="IDR")
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=True, index=True)
+    is_active = Column(Boolean, default=True, index=True)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Self-referential relationship for hierarchical accounts
+    parent = relationship("Account", remote_side=[id], backref="children")
+
+    __table_args__ = (
+        Index("ix_account_type_active", "type", "is_active"),
+    )
+
+
+class JournalEntry(Base):
+    """Journal Entry - Immutable once posted, hash-chained for audit integrity"""
+    __tablename__ = "journal_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    entry_number = Column(BigInteger, unique=True, nullable=False, index=True)
+    entry_date = Column(Date, nullable=False, index=True)
+    description = Column(Text, nullable=False)
+    reference_type = Column(String(50), nullable=True, index=True)  # MINT, BURN, BRIDGE_LOCK, BRIDGE_RELEASE, FEE, PAYOUT, DEPOSIT
+    reference_id = Column(String(100), nullable=True, index=True)  # tx_hash, bridge_nonce, deposit_id, etc.
+    status = Column(SQLEnum(EntryStatus), nullable=False, default=EntryStatus.DRAFT, index=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    posted_at = Column(DateTime, nullable=True, index=True)
+    posted_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reversed_at = Column(DateTime, nullable=True)
+    reversed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    reversal_reason = Column(Text, nullable=True)
+    prev_hash = Column(String(64), nullable=True)  # Hash of previous posted entry for chain integrity
+
+    # Relationships
+    lines = relationship("JournalLine", back_populates="journal_entry", cascade="all, delete-orphan")
+    creator = relationship("User", foreign_keys=[created_by])
+    poster = relationship("User", foreign_keys=[posted_by])
+    reverser = relationship("User", foreign_keys=[reversed_by])
+
+    __table_args__ = (
+        Index("ix_journal_entry_date_status", "entry_date", "status"),
+        Index("ix_journal_entry_ref", "reference_type", "reference_id"),
+    )
+
+
+class JournalLine(Base):
+    """Journal Line - Individual debit/credit entries within a journal entry"""
+    __tablename__ = "journal_lines"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    journal_entry_id = Column(UUID(as_uuid=True), ForeignKey("journal_entries.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False, index=True)
+    debit = Column(Numeric(precision=78, scale=0), nullable=False, default=0)  # 18 decimals for IDR wei
+    credit = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    description = Column(Text, nullable=True)
+    line_number = Column(Integer, nullable=False)
+
+    # Relationships
+    journal_entry = relationship("JournalEntry", back_populates="lines")
+    account = relationship("Account")
+
+    __table_args__ = (
+        CheckConstraint("debit = 0 OR credit = 0", name="ck_journal_line_one_sided"),
+        CheckConstraint("debit >= 0 AND credit >= 0", name="ck_journal_line_non_negative"),
+        UniqueConstraint("journal_entry_id", "line_number", name="uq_journal_line_number"),
+    )
+
+
+class Reconciliation(Base):
+    """Reconciliation - Daily reconciliation between on-chain, off-chain, and bank state"""
+    __tablename__ = "reconciliations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    reconciliation_date = Column(Date, nullable=False, index=True)
+    type = Column(String(50), nullable=False, index=True)  # DAILY_SUPPLY, DAILY_RESERVE, DEPOSIT_MINT, REDEMPTION_PAYOUT, BRIDGE_BALANCE
+    expected_value = Column(Numeric(precision=78, scale=0), nullable=False)
+    actual_value = Column(Numeric(precision=78, scale=0), nullable=False)
+    difference = Column(Numeric(precision=78, scale=0), nullable=False)  # actual - expected
+    status = Column(String(20), nullable=False, default="OPEN", index=True)  # OPEN, INVESTIGATING, RESOLVED, FALSE_POSITIVE
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    resolver = relationship("User", foreign_keys=[resolved_by])
+
+    __table_args__ = (
+        UniqueConstraint("reconciliation_date", "type", name="uq_reconciliation_date_type"),
+    )
+
+
+class FinancialSnapshot(Base):
+    """Financial Snapshot - Point-in-time balance sheet for audit/regulatory reporting"""
+    __tablename__ = "financial_snapshots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    snapshot_date = Column(Date, nullable=False, index=True)
+    snapshot_type = Column(String(20), nullable=False, index=True)  # DAILY, MONTHLY, QUARTERLY, YEARLY
+    
+    # Assets
+    total_fiat_reserve = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    customer_liability_reserve = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    operational_cash = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    fee_revenue_reserve = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    pending_deposits = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    encumbered_reserve = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    
+    # Liabilities
+    total_token_liability = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    pending_withdrawals = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    
+    # On-chain state
+    onchain_total_supply = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    onchain_reserve_balance = Column(Numeric(precision=78, scale=0), nullable=False, default=0)
+    
+    # Collateralization
+    collateralization_ratio_bps = Column(Integer, nullable=True)  # basis points (10000 = 100%)
+    
+    # Hash chain for integrity
+    prev_snapshot_hash = Column(String(64), nullable=True)
+    snapshot_hash = Column(String(64), nullable=False)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("snapshot_date", "snapshot_type", name="uq_snapshot_date_type"),
+    )
 
 # ============================================================
 # Database Setup

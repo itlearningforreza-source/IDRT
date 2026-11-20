@@ -17,7 +17,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 
 from .database import init_db, close_db
 from .auth import get_current_user, require_roles
-from .routers import token, multisig, reserve, bridge, admin, health
+from .routers import token, multisig, reserve, bridge, admin, health, ledger
 from .models import User
 
 # Configure logging
