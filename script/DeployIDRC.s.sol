@@ -135,7 +135,9 @@ contract DeployIDRC is Script {
         // 6. Deploy ProofOfReserve
         // ============================================================
         console2.log("\n[6/7] Deploying ProofOfReserve...");
-        ProofOfReserve reserve = new ProofOfReserve(msAddr, oracle);
+        address[] memory oracleSigners = new address[](1);
+        oracleSigners[0] = oracle;
+        ProofOfReserve reserve = new ProofOfReserve(msAddr, oracleSigners, 1);
         console2.log("ProofOfReserve deployed at:", address(reserve));
 
         // ============================================================

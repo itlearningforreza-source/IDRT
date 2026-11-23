@@ -13,25 +13,51 @@ contract ProofOfReserveTest is Test {
     MultisigWallet multisig;
     
     address admin = address(0x1);
-    address oracle = address(0x2);
+    address oracle;
     address auditor = address(0x3);
-    address user = address(0x10);
+    address user;
     address[] signers = [address(0x1), address(0x2), address(0x3)];
 
+    // Oracle signers for threshold
+    address[] oracleSigners;
+    uint256 threshold = 1;
+
     function setUp() public {
+        oracle = vm.rememberKey(0x1234);
+        user = vm.rememberKey(0x5678);
+        oracleSigners = new address[](1);
+        oracleSigners[0] = oracle;
+
+        vm.warp(1_800_000_000);
+
         vm.startPrank(admin);
 
         // Deploy multisig
         multisig = new MultisigWallet(signers, 2, 3600);
 
-        // Deploy access control (constructor sets admin)
-        
-        // Oracle role is granted in constructor
-
-        // Deploy reserve (constructor takes admin and oracle)
-        reserve = new ProofOfReserve(admin, oracle);
+        // Deploy ProofOfReserve with oracle signers and threshold
+        reserve = new ProofOfReserve(admin, oracleSigners, threshold);
 
         vm.stopPrank();
+    }
+
+    function _attestationDigest(uint256 fiatBalance_, uint256 timestamp_, uint256 chainId_, address reserveContract_)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 structHash = keccak256(abi.encode(
+            keccak256("Attestation(uint256 fiatBalanceIdr,uint256 timestamp,uint256 chainId,address reserveContract)"),
+            fiatBalance_, timestamp_, chainId_, reserveContract_
+        ));
+        bytes32 domainSeparator = keccak256(abi.encode(
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+            keccak256("IDRC ProofOfReserve"),
+            keccak256("1"),
+            block.chainid,
+            reserveContract_
+        ));
+        return keccak256(abi.encodePacked(hex"1901", domainSeparator, structHash));
     }
 
     // ===========================================
@@ -39,53 +65,249 @@ contract ProofOfReserveTest is Test {
     // ===========================================
 
     function testInitialization() public {
-        assertEq(reserve.oracle(), oracle);
+        assertEq(reserve.oracleSignerCount(), 1);
+        assertEq(reserve.requiredSignatures(), 1);
+        assertTrue(reserve.isOracleSigner(oracle));
         assertEq(reserve.fiatBalanceIdr(), 0);
         assertEq(reserve.lastOracleUpdate(), 0);
     }
 
     function testOracleChange() public {
+        // Legacy function - should revert
         address newOracle = address(0x100);
         vm.prank(admin);
+        vm.expectRevert();
         reserve.setOracle(newOracle);
-        assertEq(reserve.oracle(), newOracle);
+    }
+
+    function testAddOracleSigner() public {
+        address newOracle = address(0x100);
+        vm.prank(admin);
+        reserve.addOracleSigner(newOracle);
+        assertTrue(reserve.isOracleSigner(newOracle));
+        assertEq(reserve.oracleSignerCount(), 2);
+    }
+
+    function testRemoveOracleSigner() public {
+        address newOracle = address(0x100);
+        vm.prank(admin);
+        reserve.addOracleSigner(newOracle);
+        assertEq(reserve.oracleSignerCount(), 2);
+        
+        vm.prank(admin);
+        reserve.removeOracleSigner(newOracle);
+        assertFalse(reserve.isOracleSigner(newOracle));
+        assertEq(reserve.oracleSignerCount(), 1);
+    }
+
+    function testRemoveLastOracleSignerReverts() public {
+        vm.prank(admin);
+        vm.expectRevert();
+        reserve.removeOracleSigner(oracle);
+    }
+
+    function testSetThreshold() public {
+        address newOracle = address(0x100);
+        vm.prank(admin);
+        reserve.addOracleSigner(newOracle);
+        
+        vm.prank(admin);
+        reserve.setThreshold(2);
+        assertEq(reserve.requiredSignatures(), 2);
+    }
+
+    function testSetThresholdZeroReverts() public {
+        vm.prank(admin);
+        vm.expectRevert();
+        reserve.setThreshold(0);
+    }
+
+    function testSetThresholdExceedsSignersReverts() public {
+        vm.prank(admin);
+        vm.expectRevert();
+        reserve.setThreshold(5); // Only 1 signer
     }
 
     // ===========================================
-    // FIAT BALANCE TESTS
+    // ATTESTATION TESTS
     // ===========================================
 
-    function testUpdateFiatBalance() public {
-        uint256 amount = 1000000 * 1e6; // 1M with 6 decimals
+    function _sigArray(address a) internal pure returns (address[] memory) {
+        address[] memory arr = new address[](1);
+        arr[0] = a;
+        return arr;
+    }
 
+    function _sigArray2(address a, address b) internal pure returns (address[] memory) {
+        address[] memory arr = new address[](2);
+        arr[0] = a;
+        arr[1] = b;
+        return arr;
+    }
+
+    function _bytesArray(bytes memory b) internal pure returns (bytes[] memory) {
+        bytes[] memory arr = new bytes[](1);
+        arr[0] = b;
+        return arr;
+    }
+
+    function _bytesArray2(bytes memory b1, bytes memory b2) internal pure returns (bytes[] memory) {
+        bytes[] memory arr = new bytes[](2);
+        arr[0] = b1;
+        arr[1] = b2;
+        return arr;
+    }
+
+    function testSubmitAttestation() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        address reserveContract_ = address(reserve);
+        
+        // Create attestation hash
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        // Sign with oracle key
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
         vm.prank(oracle);
-        reserve.updateFiatBalance(amount);
-
-        assertEq(reserve.fiatBalanceIdr(), amount);
-        assertEq(reserve.lastOracleUpdate(), block.timestamp);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+        
+        assertEq(reserve.fiatBalanceIdr(), fiatBalance_);
+        assertEq(reserve.lastOracleUpdate(), timestamp_);
     }
 
-    function testUpdateFiatBalanceEmitsEvent() public {
-        uint256 amount = 1000000 * 1e6;
-
+    function testSubmitAttestationEmitsEvent() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
         vm.expectEmit(true, true, false, true);
-        emit IProofOfReserve.FiatBalanceUpdated(amount, oracle);
-
+        emit IProofOfReserve.FiatBalanceUpdated(fiatBalance_, oracle, timestamp_, 1);
+        
         vm.prank(oracle);
-        reserve.updateFiatBalance(amount);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
     }
 
-    function testUpdateFiatBalanceNonOracleReverts() public {
+    function testSubmitAttestationNonOracleReverts() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(user, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
         vm.prank(user);
         vm.expectRevert();
-        reserve.updateFiatBalance(1000 * 1e6);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(user), _bytesArray(signature_));
     }
 
-    function testUpdateFiatBalanceZeroAmount() public {
+    function testSubmitAttestationInsufficientSignaturesReverts() public {
+        // Add second oracle but keep threshold at 1
+        address oracle2 = address(0x100);
+        vm.prank(admin);
+        reserve.addOracleSigner(oracle2);
+        
+        // Set threshold to 2
+        vm.prank(admin);
+        reserve.setThreshold(2);
+        
+        // Submit with only 1 signature
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
         vm.prank(oracle);
-        reserve.updateFiatBalance(0);
+        vm.expectRevert();
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+    }
 
-        assertEq(reserve.fiatBalanceIdr(), 0);
+    function testSubmitAttestationDuplicateSignerReverts() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
+        vm.prank(oracle);
+        vm.expectRevert();
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray2(oracle, oracle), _bytesArray2(signature_, signature_));
+    }
+
+    function testSubmitAttestationInvalidSignerReverts() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(user, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
+        vm.prank(oracle);
+        vm.expectRevert();
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(user), _bytesArray(signature_));
+    }
+
+    function testSubmitAttestationExpiredReverts() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp - 3 hours; // Expired
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
+        vm.prank(oracle);
+        vm.expectRevert();
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+    }
+
+    function testSubmitAttestationFutureTimestampReverts() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp + 2 minutes; // Future timestamp
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
+        vm.prank(oracle);
+        vm.expectRevert();
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+    }
+
+    function testSubmitAttestationZeroBalanceReverts() public {
+        uint256 fiatBalance_ = 0;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
+        vm.prank(oracle);
+        vm.expectRevert();
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
     }
 
     // ===========================================
@@ -116,185 +338,213 @@ contract ProofOfReserveTest is Test {
         bytes32 hash = keccak256("audit-report-hash-123");
         uint256 reportedFiat = 1000000 * 1e6;
 
-        // Grant auditor role first
         bytes32 AUDITOR_ROLE = keccak256("AUDITOR_ROLE");
         vm.prank(admin);
         reserve.grantRole(AUDITOR_ROLE, auditor);
-
-        vm.prank(auditor);
 
         vm.expectEmit(true, true, false, true);
         emit IProofOfReserve.AuditProofSubmitted(1, hash, reportedFiat, auditor);
 
+        vm.prank(auditor);
         reserve.submitAuditProof(hash, reportedFiat);
     }
 
     function testSubmitAuditProofNonAuditorReverts() public {
-        bytes32 AUDITOR_ROLE = keccak256("AUDITOR_ROLE");
-        vm.prank(admin);
-        reserve.grantRole(AUDITOR_ROLE, auditor);
+        bytes32 hash = keccak256("audit-report-hash-123");
+        uint256 reportedFiat = 1000000 * 1e6;
 
         vm.prank(user);
         vm.expectRevert();
-        reserve.submitAuditProof(keccak256("hash"), 1000000 * 1e6);
+        reserve.submitAuditProof(hash, reportedFiat);
     }
 
     // ===========================================
-    // COLLATERALIZATION RATIO TESTS
+    // CIRCUIT BREAKER & STALENESS TESTS
     // ===========================================
 
-    function testGetCollateralizationRatio() public {
-        // Set fiat balance to 1M USD
+    function testCheckStaleness() public {
+        // No oracle update yet - should be stale
+        assertTrue(reserve.checkStaleness(1 hours));
+        
+        // Submit attestation
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
         vm.prank(oracle);
-        reserve.updateFiatBalance(1000000 * 1e6);
-
-        // Total supply = 0, ratio should be max
-        uint256 ratio = reserve.reserveRatio(0);
-        assertEq(ratio, type(uint256).max);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+        
+        // Should not be stale immediately
+        assertFalse(reserve.checkStaleness(1 hours));
+        
+        // Warp time forward past staleness threshold
+        vm.warp(block.timestamp + 2 hours);
+        
+        // Should be stale now
+        assertTrue(reserve.checkStaleness(1 hours));
     }
 
-    function testCollateralizationRatioCalculation() public {
-        // Set fiat balance to 1M USD (1e6 = 6 decimals)
-        vm.prank(oracle);
-        reserve.updateFiatBalance(1000000 * 1e6);
-
-        // Total supply = 500k tokens (1:1 peg, 18 decimals)
-        // Ratio = (fiat * 1e18) / supply = (1e12 * 1e18) / 5e23 = 1e30 / 5e23 = 2e6
-        // Wait: fiatBalanceIdr = 1,000,000 * 1e6 = 1e12
-        // supply = 500,000 * 1e18 = 5e23
-        // ratio = (1e12 * 1e18) / 5e23 = 1e30 / 5e23 = 2e6
-        uint256 ratio = reserve.reserveRatio(500000 * 1e18);
-
-        assertEq(ratio, 2 * 10**6);
-    }
-
-    function testCollateralizationRatioUnderCollateralized() public {
-        vm.prank(oracle);
-        reserve.updateFiatBalance(500000 * 1e6); // 500k USD
-
-        // Total supply = 1M tokens
-        uint256 ratio = reserve.reserveRatio(1000000 * 1e18);
-
-        // (5e11 * 1e18) / 1e24 = 5e29 / 1e24 = 5e5
-        assertEq(ratio, 5 * 10**5);
-    }
-
-    function testCollateralizationRatioExactlyFullyBacked() public {
-        vm.prank(oracle);
-        reserve.updateFiatBalance(1000000 * 1e6); // 1M USD
-
-        // Total supply = 1M tokens
-        // (1e12 * 1e18) / 1e24 = 1e30 / 1e24 = 1e6
-        uint256 ratio = reserve.reserveRatio(1000000 * 1e18);
-
-        assertEq(ratio, 10**6);
-    }
-
-    // ===========================================
-    // IS SOLVENT TESTS
-    // ===========================================
-
-    function testIsFullyCollateralisedWhenFullyBacked() public {
-        vm.prank(oracle);
-        // For isFullyCollateralised to return true, need ratio >= 1e18
-        // ratio = (fiat * 1e18) / supply >= 1e18
-        // fiat * 1e18 >= supply * 1e18
-        // fiat >= supply
-        // So if supply = 1000 ether = 1000 * 1e18, need fiat >= 1000 * 1e18
-        reserve.updateFiatBalance(1000 * 1e18);
-
-        assertEq(reserve.isFullyCollateralised(1000 * 1e18), true);
-        assertEq(reserve.isFullyCollateralised(500 * 1e18), true);
-    }
-
-    function testIsFullyCollateralisedWhenUnderCollateralized() public {
-        vm.prank(oracle);
-        reserve.updateFiatBalance(500 * 1e18);
-
-        assertEq(reserve.isFullyCollateralised(1000 * 1e18), false);
-    }
-
-    function testIsFullyCollateralisedWithMinRatio() public {
-        vm.prank(oracle);
-        reserve.updateFiatBalance(1100 * 1e18);
-
-        // Min ratio is 1e18 (100%)
-        // With fiat=1100e18, supply=1000e18: ratio = (1100e18 * 1e18) / 1000e18 = 1.1e18 >= 1e18 => true
-        // With fiat=1100e18, supply=1100e18: ratio = (1100e18 * 1e18) / 1100e18 = 1e18 >= 1e18 => true
-        // Need supply > fiat to get false
-        assertEq(reserve.isFullyCollateralised(1000 * 1e18), true);
-        assertEq(reserve.isFullyCollateralised(1100 * 1e18), true);
-        assertEq(reserve.isFullyCollateralised(1200 * 1e18), false);
-    }
-
-    // ===========================================
-    // RESERVE STATUS TESTS
-    // ===========================================
-
-    function testGetReserveStatus() public {
-        vm.prank(oracle);
-        reserve.updateFiatBalance(1000 * 1e18);
-
-        // Grant auditor role and submit audit proof
-        bytes32 AUDITOR_ROLE = keccak256("AUDITOR_ROLE");
+    function testTriggerCircuitBreaker() public {
+        // No oracle update yet - fail-closed: pauses because there is no fresh data
         vm.prank(admin);
-        reserve.grantRole(AUDITOR_ROLE, auditor);
+        reserve.triggerCircuitBreaker(1 hours);
+        assertTrue(reserve.paused());
 
-        vm.prank(auditor);
-        reserve.submitAuditProof(keccak256("audit-hash"), 1000 * 1e18);
-
-        // Check audit report
-        (uint256 seq, bytes32 proofHash, uint256 fiat, address submittedBy, uint256 timestamp) = reserve.getAuditReport(1);
-        assertEq(seq, 1);
-        assertEq(proofHash, keccak256("audit-hash"));
-        assertEq(fiat, 1000 * 1e18);
-        assertEq(submittedBy, auditor);
-        assertEq(reserve.auditReportCount(), 1);
-    }
-
-    // ===========================================
-    // ADMIN FUNCTIONS TESTS
-    // ===========================================
-
-    function testSetOracle() public {
-        address newOracle = address(0x4);
-
+        // Reset circuit breaker
         vm.prank(admin);
-        reserve.setOracle(newOracle);
+        reserve.resetCircuitBreaker();
+        assertFalse(reserve.paused());
 
-        assertEq(reserve.oracle(), newOracle);
+        // Submit fresh attestation
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+
+        vm.prank(oracle);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+
+        assertFalse(reserve.paused());
+
+        // Warp time forward past staleness threshold
+        vm.warp(block.timestamp + 2 hours);
+
+        // Trigger circuit breaker
+        vm.prank(admin);
+        reserve.triggerCircuitBreaker(1 hours);
+
+        // Contract should be paused
+        assertTrue(reserve.paused());
     }
 
-    function testAdminOnlySetOracle() public {
-        vm.prank(user);
+    function testResetCircuitBreaker() public {
+        // Submit attestation
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
+        vm.prank(oracle);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+        
+        // Warp time forward past staleness threshold
+        vm.warp(block.timestamp + 2 hours);
+        
+        // Trigger circuit breaker
+        vm.prank(admin);
+        reserve.triggerCircuitBreaker(1 hours);
+        assertTrue(reserve.paused());
+        
+        // Reset circuit breaker
+        vm.prank(admin);
+        reserve.resetCircuitBreaker();
+        assertFalse(reserve.paused());
+    }
+
+    function testTriggerCircuitBreakerNotStaleReverts() public {
+        // Submit recent attestation
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
+        vm.prank(oracle);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+        
+        // Try to trigger circuit breaker when not stale
+        vm.prank(admin);
         vm.expectRevert();
-        reserve.setOracle(address(0x4));
+        reserve.triggerCircuitBreaker(1 hours);
     }
 
     // ===========================================
-    // EDGE CASES
+    // RESERVE RATIO TESTS
     // ===========================================
 
-    function testLargeFiatBalance() public {
-        uint256 largeAmount = type(uint128).max;
-
+    function testReserveRatio() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
         vm.prank(oracle);
-        reserve.updateFiatBalance(largeAmount);
-
-        assertEq(reserve.fiatBalanceIdr(), largeAmount);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+        
+        // Test with zero supply
+        assertEq(reserve.reserveRatio(0), type(uint256).max);
+        
+        // Test with supply equal to fiat
+        assertEq(reserve.reserveRatio(fiatBalance_), 1e18);
+        
+        // Test with half supply
+        assertEq(reserve.reserveRatio(fiatBalance_ / 2), 2e18);
     }
 
-    function testMultipleFiatUpdates() public {
+    function testIsFullyCollateralised() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
         vm.prank(oracle);
-        reserve.updateFiatBalance(1000 * 1e18);
-
-        vm.warp(block.timestamp + 3600);
-
-        vm.prank(oracle);
-        reserve.updateFiatBalance(1500 * 1e18);
-
-        assertEq(reserve.fiatBalanceIdr(), 1500 * 1e18);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+        
+        // Should be fully collateralised at 1:1
+        assertTrue(reserve.isFullyCollateralised(fiatBalance_));
+        
+        // Should be fully collateralised at 1:2 (200%)
+        assertTrue(reserve.isFullyCollateralised(fiatBalance_ / 2));
+        
+        // Should NOT be fully collateralised at 2:1 (50%)
+        assertFalse(reserve.isFullyCollateralised(fiatBalance_ * 2));
     }
+
+    function testCheckCollateralisation() public {
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+        
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+        
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+        
+        vm.prank(oracle);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+        
+        assertTrue(reserve.checkCollateralisation(fiatBalance_));
+    }
+
+    // ===========================================
+    // AUDIT PROOF TESTS
+    // ===========================================
+
+
 
     function testMultipleAuditProofs() public {
         // Grant auditor role first
@@ -317,4 +567,58 @@ contract ProofOfReserveTest is Test {
         (, bytes32 proofHash2,,,) = reserve.getAuditReport(2);
         assertEq(proofHash2, keccak256("hash-2"));
     }
+
+    function testSubmitAuditProofZeroHashReverts() public {
+        bytes32 AUDITOR_ROLE = keccak256("AUDITOR_ROLE");
+        vm.prank(admin);
+        reserve.grantRole(AUDITOR_ROLE, auditor);
+
+        vm.prank(auditor);
+        vm.expectRevert();
+        reserve.submitAuditProof(bytes32(0), 1000 * 1e18);
+    }
+
+    function testSubmitAuditProofZeroFiatReverts() public {
+        bytes32 AUDITOR_ROLE = keccak256("AUDITOR_ROLE");
+        vm.prank(admin);
+        reserve.grantRole(AUDITOR_ROLE, auditor);
+
+        vm.prank(auditor);
+        vm.expectRevert();
+        reserve.submitAuditProof(keccak256("hash-1"), 0);
+    }
+
+    // ===========================================
+    // ORACLE SIGNER MANAGEMENT TESTS
+    // ===========================================
+
+
+    function testAddOracleSignerZeroAddressReverts() public {
+        vm.prank(admin);
+        vm.expectRevert();
+        reserve.addOracleSigner(address(0));
+    }
+
+    function testAddOracleSignerAlreadyExistsReverts() public {
+        vm.prank(admin);
+        vm.expectRevert();
+        reserve.addOracleSigner(oracle);
+    }
+
+
+    function testRemoveOracleSignerNotSignerReverts() public {
+        vm.prank(admin);
+        vm.expectRevert();
+        reserve.removeOracleSigner(address(0x100));
+    }
+
+    function testRemoveOracleSignerThresholdReverts() public {
+        // Can't remove last signer if threshold would be exceeded
+        vm.prank(admin);
+        vm.expectRevert();
+        reserve.removeOracleSigner(oracle);
+    }
+
+
+
 }

@@ -36,7 +36,9 @@ contract IDRCTokenTest is Test {
         token = new IDRCToken();
         token.initialize("IDR Coin", "IDRC", admin, minter, pauser, admin, burner, blacklister, 10_000_000_000 * 10**18);
         
-        reserve = new ProofOfReserve(admin, oracle);
+        address[] memory oracleSigners = new address[](1);
+        oracleSigners[0] = oracle;
+        reserve = new ProofOfReserve(admin, oracleSigners, 1);
         vault = new BridgeVault(1, relayerAddr);
         relayer = new BridgeRelayer(relayerAddr);
         
