@@ -29,6 +29,12 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
     // ============================================================
     uint256 internal constant _MIN_RESERVE_RATIO = 1e18; // 100% = 1e18 (1.0 with 18 decimals)
     uint256 internal constant _ATTESTATION_VALIDITY = 2 hours; // Attestations valid for 2 hours
+    uint256 private constant _E18 = 1e18; // Precision of the ratio (collateralisation values are 18-decimal)
+    uint256 private constant _FUTURE_TIMESTAMP_TOLERANCE = 1 minutes; // Max future skew accepted on attestation timestamps
+    // secp256k1 curve order / 2 - signatures above this are malleable
+    bytes32 private constant _HALF_SECP256K1 =
+        0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
+    uint256 private constant _MAX_FIAT_BALANCE = type(uint256).max / _E18; // Keeps reserveRatio() multiplication overflow-free
     bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
     bytes32 public constant AUDITOR_ROLE = keccak256("AUDITOR_ROLE");
     bytes32 public constant ORACLE_ADMIN_ROLE = keccak256("ORACLE_ADMIN_ROLE");
@@ -63,8 +69,10 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
     bytes32 private _latestProofHash;
     uint256 private fiatBalanceIdr_;
     uint256 private _lastOracleUpdate;
+    uint256 private _lastAcceptedTimestamp; // Monotonic: old attestations rejected after newer accepted
     Attestation private _latestAttestation;
     mapping(address => bool) private _isOracleSigner;
+    address[] private _oracleSignerList; // Enumeration of active signers (used by getOracleSigners)
     uint256 private _requiredSignatures; // Threshold (e.g., 3)
     uint256 private _oracleSignerCount; // Total signers (e.g., 5)
     
@@ -88,14 +96,20 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         _grantRole(ORACLE_ADMIN_ROLE, admin_);
         
         _requiredSignatures = threshold_;
-        _oracleSignerCount = oracleSigners_.length;
-        
-        // Initialize oracle signers
+
+        // Initialize oracle signers (deduplicated, so count always matches the enumeration list)
+        uint256 uniqueCount = 0;
         for (uint256 i = 0; i < oracleSigners_.length; i++) {
-            _isOracleSigner[oracleSigners_[i]] = true;
-            _grantRole(ORACLE_ROLE, oracleSigners_[i]);
-            emit OracleSignerAdded(oracleSigners_[i]);
+            address signer = oracleSigners_[i];
+            if (!_isOracleSigner[signer]) {
+                _isOracleSigner[signer] = true;
+                _grantRole(ORACLE_ROLE, signer);
+                _oracleSignerList.push(signer);
+                uniqueCount++;
+                emit OracleSignerAdded(signer);
+            }
         }
+        _oracleSignerCount = uniqueCount;
         
         // Initialize EIP-712 domain separator
         {
@@ -147,6 +161,7 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         
         _isOracleSigner[signer_] = true;
         _grantRole(ORACLE_ROLE, signer_);
+        _oracleSignerList.push(signer_);
         _oracleSignerCount++;
         emit OracleSignerAdded(signer_);
     }
@@ -159,7 +174,19 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         _isOracleSigner[signer_] = false;
         _revokeRole(ORACLE_ROLE, signer_);
         _oracleSignerCount--;
+        _removeSignerFromList(signer_);
         emit OracleSignerRemoved(signer_);
+    }
+
+    function _removeSignerFromList(address signer) private {
+        uint256 len = _oracleSignerList.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (_oracleSignerList[i] == signer) {
+                _oracleSignerList[i] = _oracleSignerList[len - 1];
+                _oracleSignerList.pop();
+                return;
+            }
+        }
     }
     
     function setThreshold(uint256 threshold_) external override onlyRole(ORACLE_ADMIN_ROLE) {
@@ -177,10 +204,25 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         revert OnlyOracleAllowed();
     }
     
-    function setAdmin(address admin_) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (admin_ == address(0)) revert ZeroAddress();
-        // Note: In production, use Ownable's transferOwnership instead
-        // This is a simplified version
+    /**
+     * @notice Auditable admin transition (Security Audit 4.0, Phase 3)
+     * - Zero-address protection, role transfer, revocation of previous admin
+     * - Emits AdminTransition. Safe: old admin loses DEFAULT_ADMIN_ROLE.
+     */
+    function setAdmin(address newAdmin_) external override onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (newAdmin_ == address(0)) revert ZeroAddress();
+
+        address old = _admin;
+        if (old != address(0) && old != newAdmin_) {
+            _revokeRole(DEFAULT_ADMIN_ROLE, old);
+            _revokeRole(AUDITOR_ROLE, old);
+            _revokeRole(ORACLE_ADMIN_ROLE, old);
+        }
+        _admin = newAdmin_;
+        _grantRole(DEFAULT_ADMIN_ROLE, newAdmin_);
+        _grantRole(AUDITOR_ROLE, newAdmin_);
+        _grantRole(ORACLE_ADMIN_ROLE, newAdmin_);
+        emit AdminTransition(old, newAdmin_);
     }
     
     // ============================================================
@@ -197,15 +239,20 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
     ) external override onlyRole(ORACLE_ROLE) nonReentrant whenNotPaused {
         // Validate inputs
         if (fiatBalance_ == 0) revert ZeroFiatBalance();
+        if (fiatBalance_ > _MAX_FIAT_BALANCE) revert ValueTooLarge(fiatBalance_, _MAX_FIAT_BALANCE);
         if (timestamp_ == 0) revert ZeroFiatBalance();
         if (chainId_ == 0) revert InvalidChainId(chainId_);
         if (reserveContract_ == address(0)) revert InvalidReserveContract(reserveContract_);
         if (signers_.length != signatures_.length) revert InsufficientSignatures(signers_.length, signatures_.length);
         if (signers_.length < _requiredSignatures) revert InsufficientSignatures(signers_.length, _requiredSignatures);
-        
+
         // Check timestamp freshness (not too old, not in future)
         if (block.timestamp > timestamp_ + _ATTESTATION_VALIDITY) revert AttestationExpired(timestamp_, _ATTESTATION_VALIDITY);
-        if (timestamp_ > block.timestamp + 1 minutes) revert AttestationExpired(timestamp_, 0);
+        if (timestamp_ > block.timestamp + _FUTURE_TIMESTAMP_TOLERANCE) revert AttestationExpired(timestamp_, 0);
+        // Monotonic: reject older attestations if a newer one was already accepted
+        if (_lastAcceptedTimestamp != 0 && timestamp_ <= _lastAcceptedTimestamp) {
+            revert AttestationStale(timestamp_, _lastAcceptedTimestamp);
+        }
         
         // Verify each signature
         bytes32 digest = _hashAttestation(fiatBalance_, timestamp_, chainId_, reserveContract_);
@@ -226,12 +273,18 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
                 }
             }
             
+            // Anti-malleability: enforce low-s and nonzero r,s,v on the signature
+            (bytes32 r32, bytes32 s32, uint8 v8) = abi.decode(signatures_[i], (bytes32, bytes32, uint8));
+            if (r32 == 0 || s32 == 0) revert SignatureMalformed();
+            if (uint256(s32) > uint256(_HALF_SECP256K1)) revert SignatureMalformed();
+            if (v8 != 27 && v8 != 28) revert SignatureMalformed();
+
             // Recover signer from signature
             address recovered = digest.recover(signatures_[i]);
             if (recovered != signer) {
                 revert InvalidSignature(signer);
             }
-            
+
             validSignatures++;
         }
         
@@ -251,7 +304,8 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
         
         fiatBalanceIdr_ = fiatBalance_;
         _lastOracleUpdate = timestamp_;
-        
+        if (timestamp_ > _lastAcceptedTimestamp) _lastAcceptedTimestamp = timestamp_;
+
         emit FiatBalanceUpdated(fiatBalanceIdr_, msg.sender, timestamp_, validSignatures);
     }
     
@@ -273,11 +327,13 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
     // ============================================================
     
     function checkStaleness(uint256 stalenessThreshold) external view override returns (bool) {
-        if (_lastOracleUpdate == 0) return true; // No data yet = stale
-        if (block.timestamp > _lastOracleUpdate + stalenessThreshold) return true;
-        return false;
+        return _checkStaleness(stalenessThreshold);
     }
-    
+
+    function isStale(uint256 stalenessThreshold) external view override returns (bool) {
+        return _checkStaleness(stalenessThreshold);
+    }
+
     function _checkStaleness(uint256 stalenessThreshold) internal view returns (bool) {
         if (_lastOracleUpdate == 0) return true; // No data yet = stale
         if (block.timestamp > _lastOracleUpdate + stalenessThreshold) return true;
@@ -302,7 +358,7 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
     
     function reserveRatio(uint256 tokenTotalSupply) public view override returns (uint256) {
         if (tokenTotalSupply == 0) return type(uint256).max;
-        return (fiatBalanceIdr_ * 1e18) / tokenTotalSupply;
+        return (fiatBalanceIdr_ * _E18) / tokenTotalSupply;
     }
     
     function isFullyCollateralised(uint256 tokenTotalSupply) public view override returns (bool) {
@@ -334,15 +390,13 @@ contract ProofOfReserve is IProofOfReserve, AccessControl, ReentrancyGuard, Paus
     }
     
     function oracle() external view override returns (address) {
-        // Return first oracle signer for backward compatibility
-        // In production, this should be deprecated
-        return address(0);
+        // Return first active oracle signer (prefer one with ORACLE_ROLE)
+        if (_oracleSignerCount == 0) return address(0);
+        return _oracleSignerList[0];
     }
     
     function getOracleSigners() external view override returns (address[] memory) {
-        // In production, this would return the list of signers
-        // For now, return empty (would need enumeration)
-        return new address[](0);
+        return _oracleSignerList;
     }
     
     function requiredSignatures() external view override returns (uint256) {

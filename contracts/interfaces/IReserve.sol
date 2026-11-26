@@ -15,6 +15,7 @@ interface IProofOfReserve {
     event OracleSignerRemoved(address indexed signer);
     event ThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
     event CircuitBreakerTriggered(uint256 lastUpdate, uint256 stalenessThreshold);
+    event AdminTransition(address indexed oldAdmin, address indexed newAdmin);
     
     // ============================================================
     // Errors
@@ -37,6 +38,9 @@ interface IProofOfReserve {
     error SignerAlreadyExists(address signer);
     error SignerDoesNotExist(address signer);
     error CircuitBreakerActive(uint256 lastUpdate, uint256 stalenessThreshold);
+    error ValueTooLarge(uint256 value, uint256 max);
+    error AttestationStale(uint256 timestamp, uint256 lastAccepted);
+    error SignatureMalformed();
     
     // ============================================================
     // Admin Functions
@@ -64,6 +68,7 @@ interface IProofOfReserve {
     // Circuit Breaker & Staleness
     // ============================================================
     function checkStaleness(uint256 stalenessThreshold) external view returns (bool);
+    function isStale(uint256 stalenessThreshold) external view returns (bool);
     function triggerCircuitBreaker(uint256 stalenessThreshold) external;
     function resetCircuitBreaker() external;
     

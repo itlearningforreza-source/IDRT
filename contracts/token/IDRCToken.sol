@@ -54,6 +54,27 @@ contract IDRCToken is
     mapping(address => bool) public isBlacklisted;
     uint256 public supplyCap;
     bytes32 public reserveProofHash;
+
+    // Deposit-backed issuance authorization (Security Audit 4.0, Phase 4)
+    struct IssuanceAuthorization {
+        bytes32 depositId; // Unique identifier of verified deposit evidence
+        address beneficiary; // Recipient of the minted IDRC
+        uint256 amount; // Exact approved amount (18 decimals)
+        uint256 authorizationTimestamp;
+        uint256 expirationTimestamp;
+        bytes32 reserveProofHash; // Reserve state at authorization time
+        address authorizedIssuer; // Issuer that may consume the authorization
+        bool complianceApproved;
+    }
+    mapping(bytes32 => bool) private _consumedDepositIds; // Prevent duplicate issuance
+    mapping(bytes32 => IssuanceAuthorization) private _issuanceAuths;
+    event IssuanceAuthorizationCreated(
+        bytes32 indexed depositId,
+        address indexed beneficiary,
+        uint256 amount,
+        uint256 authorizationTimestamp,
+        uint256 expirationTimestamp
+    );
     
     // EIP-2612 Permit state
     mapping(address => uint256) private _nonces;
@@ -77,6 +98,10 @@ contract IDRCToken is
     error ZeroAddress();
     error ZeroAmount();
     error SupplyCapExceeded(uint256 requested, uint256 cap);
+    error ExpiredIssuanceAuthorization(uint256 expirationTimestamp, uint256 now);
+    error DepositAlreadyUsed(bytes32 depositId);
+    error InvalidDepositId();
+    error MissingReserveVerification();
     error BlacklistedAccount(address account);
     error NotBlacklisted(address account);
     error AlreadyBlacklisted(address account);
@@ -197,6 +222,65 @@ contract IDRCToken is
     }
 
     /**
+     * @notice Create a deposit-backed issuance authorization (Phase 4)
+     * @dev The authorization references a unique, verified deposit ID and is
+     *      consumable exactly once. Consumption is via mintFromAuthorization().
+     */
+    function authorizeIssuance(
+        bytes32 depositId,
+        address beneficiary,
+        uint256 amount,
+        uint256 expirationTimestamp,
+        bytes32 reserveProofHash_
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (depositId == bytes32(0)) revert InvalidDepositId();
+        if (beneficiary == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        if (expirationTimestamp <= block.timestamp) revert ExpiredIssuanceAuthorization(expirationTimestamp, block.timestamp);
+        if (reserveProofHash_ == bytes32(0)) revert MissingReserveVerification();
+        if (_consumedDepositIds[depositId]) revert DepositAlreadyUsed(depositId);
+        if (_totalSupply + amount > supplyCap) revert SupplyCapExceeded(_totalSupply + amount, supplyCap);
+
+        _issuanceAuths[depositId] = IssuanceAuthorization({
+            depositId: depositId,
+            beneficiary: beneficiary,
+            amount: amount,
+            authorizationTimestamp: block.timestamp,
+            expirationTimestamp: expirationTimestamp,
+            reserveProofHash: reserveProofHash_,
+            authorizedIssuer: msg.sender,
+            complianceApproved: true
+        });
+        emit IssuanceAuthorizationCreated(depositId, beneficiary, amount, block.timestamp, expirationTimestamp);
+    }
+
+    /**
+     * @notice Mint IDRC using a previously authorized deposit (Phase 4)
+     * @dev Reserve-aware: requires nonzero reserveProofHash and supply cap integrity.
+     */
+    function mintFromAuthorization(
+        bytes32 depositId,
+        address beneficiary,
+        uint256 amount,
+        uint256 expirationTimestamp,
+        bytes32 reserveProofHash_
+    ) external nonReentrant whenNotPaused onlyRole(MINTER_ROLE) {
+        if (depositId == bytes32(0)) revert InvalidDepositId();
+        if (beneficiary == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        if (block.timestamp > expirationTimestamp) revert ExpiredIssuanceAuthorization(expirationTimestamp, block.timestamp);
+        if (reserveProofHash_ == bytes32(0)) revert MissingReserveVerification();
+        if (reserveProofHash_ != reserveProofHash) revert MissingReserveVerification();
+        if (_consumedDepositIds[depositId]) revert DepositAlreadyUsed(depositId);
+        if (_totalSupply + amount > supplyCap) revert SupplyCapExceeded(_totalSupply + amount, supplyCap);
+        if (isBlacklisted[beneficiary]) revert BlacklistedAccount(beneficiary);
+
+        _consumedDepositIds[depositId] = true;
+        _mint(beneficiary, amount);
+        emit Minted(beneficiary, amount);
+    }
+
+    /**
      * @notice Burn IDRC tokens from an address (issuer burn)
      * @dev Only BURNER_ROLE can call. Used when fiat is redeemed.
      */
@@ -313,19 +397,23 @@ contract IDRCToken is
         bytes32 r,
         bytes32 s
     ) external {
-        // Low-s enforcement per EIP-2612
-        // secp256k1 curve order / 2 = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0
+        if (owner == address(0)) revert ZeroAddress();
+        if (spender == address(0)) revert ZeroAddress();
+        // Low-s enforcement per EIP-2612 (anti-malleability)
+        if (v != 27 && v != 28) revert("ERC20Permit: invalid signature (v)");
         if (s > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) revert("ERC20Permit: invalid signature (high s)");
+        if (r == 0) revert("ERC20Permit: invalid signature (r)");
 
-        // Standard EIP-2612 permit implementation
+        uint256 nonce = _nonces[owner];
         bytes32 structHash = keccak256(
-            abi.encode(PERMIT_TYPEHASH, owner, spender, value, _nonces[owner]++, deadline)
+            abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonce, deadline)
         );
         // EIP-191 prefix: "" = 0x1901
         bytes32 hash = keccak256(abi.encodePacked(hex"1901", _domainSeparator, structHash));
         address signer = ecrecover(hash, v, r, s);
         if (signer != owner) revert("ERC20Permit: invalid signature");
         if (block.timestamp > deadline) revert("ERC20Permit: expired deadline");
+        _nonces[owner] = nonce + 1;
         _approve(owner, spender, value);
     }
 

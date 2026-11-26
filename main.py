@@ -3,8 +3,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional
+from decimal import Decimal
 import idrc
 from idrc import deploy_idrc, IDRCMonitor
+from services.api.auth import get_current_user
 import os
 
 app = FastAPI(title="IDRC Web Dashboard", description="API for IDR Coin Simulation")
@@ -27,9 +29,10 @@ if not os.path.exists("static"):
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 class ActionRequest(BaseModel):
-    caller: str
+    # Caller identity is NEVER taken from client input.
+    # Derived from the authenticated session via get_current_user.
     target: str = ""
-    amount: float = 0.0
+    amount: str = "0"
 
 @app.get("/")
 def read_root():
@@ -68,22 +71,36 @@ def get_balance(address: str):
     balance = token.balance_of(address)
     return {"address": address, "balance": balance / 10**18}
 
+def _parse_amount(raw: str) -> int:
+    """Fixed-point amount conversion: no float, 18-decimal precision."""
+    try:
+        d = Decimal(raw)
+        q = d.quantize(Decimal("1"))
+        if d < 0:
+            raise ValueError
+        return int(d * (10**18))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+
 @app.post("/api/multisig/propose_mint")
-def propose_mint(req: ActionRequest):
-    if req.amount <= 0:
+async def propose_mint(req: ActionRequest, user=Depends(get_current_user)):
+    amount_raw = _parse_amount(req.amount)
+    if amount_raw <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
-    
-    amount_raw = int(req.amount * 10**18)
+
+    caller = user.address  # Authenticated principal; NOT client-supplied
     tx_id = multisig.propose(
         description=f"Mint {req.amount} IDRC to {req.target}",
         fn=token.mint,
-        fn_kwargs={"to": req.target, "amount": amount_raw, "caller": deployment.multisig_address},
-        caller=req.caller
+        fn_kwargs={"to": req.target, "amount": amount_raw},
+        caller=caller
     )
     return {"tx_id": tx_id, "message": f"Transaction {tx_id} proposed successfully."}
 
 @app.post("/api/multisig/approve")
-def approve_tx(tx_id: str, caller: str):
+async def approve_tx(tx_id: str, user=Depends(get_current_user)):
+    caller = user.address
     try:
         multisig.approve(tx_id, caller=caller)
         return {"message": f"Approved transaction {tx_id} by {caller}"}
@@ -91,7 +108,8 @@ def approve_tx(tx_id: str, caller: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/multisig/execute")
-def execute_tx(tx_id: str, caller: str):
+async def execute_tx(tx_id: str, user=Depends(get_current_user)):
+    caller = user.address
     try:
         multisig.execute(tx_id, caller=caller)
         return {"message": f"Executed transaction {tx_id} successfully."}
@@ -113,22 +131,24 @@ def pending_txs():
     return {"pending_transactions": pending}
 
 @app.post("/api/transfer")
-def transfer(req: ActionRequest):
-    if req.amount <= 0:
+async def transfer(req: ActionRequest, user=Depends(get_current_user)):
+    amount_raw = _parse_amount(req.amount)
+    if amount_raw <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
-    
-    amount_raw = int(req.amount * 10**18)
+
+    caller = user.address  # Authenticated principal; NOT client-supplied
     try:
-        token.transfer(req.target, amount_raw, caller=req.caller)
+        token.transfer(req.target, amount_raw, caller=caller)
         return {"message": f"Transferred {req.amount} IDRC to {req.target}"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/oracle/update")
-def oracle_update(balance: float):
+async def oracle_update(balance: str, user=Depends(get_current_user)):
+    # Oracle endpoints require authentication; caller is never taken from input
+    amount_raw = _parse_amount(balance)
     try:
-        amount_raw = int(balance * 10**18)
-        reserve.update_fiat_balance(amount_raw, caller="0xOracle")
-        return {"message": f"Oracle updated reserve balance to {balance:,.0f} IDR"}
+        reserve.update_fiat_balance(amount_raw, caller=user.address)
+        return {"message": f"Oracle updated reserve balance to {Decimal(balance)} IDR"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

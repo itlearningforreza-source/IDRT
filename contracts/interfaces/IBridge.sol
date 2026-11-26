@@ -22,7 +22,6 @@ interface IBridgeVault {
 
     function lock(
         address token,
-        address sender,
         address recipient,
         uint256 amount,
         uint256 dstChainId
@@ -46,25 +45,31 @@ interface IBridgeVault {
  */
 interface IBridgeRelayer {
     event MessageRelayed(
-        uint256 indexed bridgeNonce,
-        uint256 indexed srcChainId,
-        uint256 indexed dstChainId,
-        address recipient,
-        uint256 amount
+        address indexed recipient,
+        uint256 amount,
+        bytes32 messageId,
+        uint256 srcChainId,
+        uint256 dstChainId
     );
     event RelayerUpdated(address indexed oldRelayer, address indexed newRelayer);
+    event VerifierSet(address indexed verifier);
+    event TokenAllowlistUpdated(address indexed token, bool allowed);
 
     function relay(
-        uint256 bridgeNonce,
         uint256 srcChainId,
         uint256 dstChainId,
+        address sourceBridge,
+        address destinationBridge,
+        address token,
+        address sender,
         address recipient,
         uint256 amount,
-        address token
+        bytes32 messageId
     ) external;
 
     function relayer() external view returns (address);
-    function processedMessages(uint256 srcChainId, uint256 bridgeNonce) external view returns (bool);
+    function verifier() external view returns (address);
+    function isMessageExecuted(bytes32 messageId) external view returns (bool);
 }
 
 /**

@@ -88,6 +88,26 @@ contract ProofOfReserveTest is Test {
         assertEq(reserve.oracleSignerCount(), 2);
     }
 
+    function testGetOracleSignersReturnsSigners() public {
+        // Initially one signer (the oracle)
+        address[] memory signers = reserve.getOracleSigners();
+        assertEq(signers.length, 1);
+        assertEq(signers[0], oracle);
+
+        // Add another signer - list grows
+        address oracle2 = address(0x100);
+        vm.prank(admin);
+        reserve.addOracleSigner(oracle2);
+        assertEq(reserve.getOracleSigners().length, 2);
+
+        // Remove it - list shrinks and still holds the original signer
+        vm.prank(admin);
+        reserve.removeOracleSigner(oracle2);
+        signers = reserve.getOracleSigners();
+        assertEq(signers.length, 1);
+        assertEq(signers[0], oracle);
+    }
+
     function testRemoveOracleSigner() public {
         address newOracle = address(0x100);
         vm.prank(admin);
@@ -310,6 +330,21 @@ contract ProofOfReserveTest is Test {
         reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
     }
 
+    function testSubmitAttestationValueTooLargeReverts() public {
+        uint256 fiatBalance_ = type(uint256).max / 2; // Exceeds the max accepted by the contract
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+
+        vm.prank(oracle);
+        vm.expectRevert();
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+    }
+
     // ===========================================
     // AUDIT PROOF TESTS
     // ===========================================
@@ -387,6 +422,31 @@ contract ProofOfReserveTest is Test {
         
         // Should be stale now
         assertTrue(reserve.checkStaleness(1 hours));
+    }
+
+    function testIsStale() public {
+        // No oracle update yet: stale
+        assertTrue(reserve.isStale(1 hours));
+
+        // Submit attestation
+        uint256 fiatBalance_ = 1000000 * 1e18;
+        uint256 timestamp_ = block.timestamp;
+        uint256 chainId_ = 11155111;
+
+        bytes32 digest = _attestationDigest(fiatBalance_, timestamp_, chainId_, address(reserve));
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(oracle, digest);
+        bytes memory signature_ = abi.encodePacked(r, s, v);
+
+        vm.prank(oracle);
+        reserve.submitAttestation(fiatBalance_, timestamp_, chainId_, address(reserve), _sigArray(oracle), _bytesArray(signature_));
+
+        // Fresh: not stale
+        assertFalse(reserve.isStale(1 hours));
+
+        // Warp past validity: stale
+        vm.warp(block.timestamp + 2 hours);
+        assertTrue(reserve.isStale(1 hours));
     }
 
     function testTriggerCircuitBreaker() public {

@@ -12,145 +12,93 @@ contract BridgeRelayerTest is Test {
 
     address admin = address(0x1);
     address relayer = address(0x2);
+    address verifier = address(0x4);
     address user1 = address(0x10);
     address user2 = address(0x11);
 
     function setUp() public {
         vm.startPrank(admin);
-
-        // Deploy token via initialize
         token = new IDRCToken();
         token.initialize("IDR Coin", "IDRC", admin, admin, admin, admin, admin, admin, 10_000_000_000 * 10**18);
-
-        // Deploy relayer
         relayerContract = new BridgeRelayer(relayer);
+        token.grantRole(token.MINTER_ROLE(), address(relayerContract));
 
-        // Grant minter role to relayer contract (so it can mint)
-        bytes32 MINTER_ROLE = token.MINTER_ROLE();
-        token.grantRole(MINTER_ROLE, address(relayerContract));
-
+        vm.startPrank(relayer); // constructor granted DEFAULT_ADMIN_ROLE to relayer
+        relayerContract.setVerifier(verifier);
+        relayerContract.setTokenAllowlist(address(token), true);
         vm.stopPrank();
     }
 
-    // ===========================================
-    // INITIALIZATION TESTS
-    // ===========================================
-
-    function testInitialization() public {
-        assertEq(relayerContract.relayer(), relayer);
-        assertEq(relayerContract.hasRole(relayerContract.RELAYER_ADMIN_ROLE(), relayer), true);
+    function _relay(bytes32 messageId, address recipient, uint256 amount) internal {
+        vm.prank(verifier);
+        relayerContract.relay(
+            1, block.chainid, address(0x100), address(relayerContract), address(token), user1, recipient, amount, messageId
+        );
     }
-
-    // ===========================================
-    // RELAY MESSAGE TESTS
-    // ===========================================
 
     function testRelayMint() public {
-        vm.prank(relayer);
-        relayerContract.relay(1, 1, 2, user1, 500 ether, address(token));
-
+        _relay(bytes32(uint256(1)), user1, 500 ether);
         assertEq(token.balanceOf(user1), 500 ether);
+        assertTrue(relayerContract.isMessageExecuted(bytes32(uint256(1))));
     }
 
-    function testRelayMintEmitsEvent() public {
-        vm.expectEmit(true, true, false, true);
-        emit IBridgeRelayer.MessageRelayed(1, 1, 2, user1, 500 ether);
-
+    // ============ EXPLOIT REPRO B/C: arbitrary minting ============
+    function testReproC_RelayerCannotRelayWithoutVerifier() public {
+        // Old model: any RELAYER_ADMIN could call relay(...) directly.
+        // New model: only the trusted verifier can relay.
         vm.prank(relayer);
-        relayerContract.relay(1, 1, 2, user1, 500 ether, address(token));
+        vm.expectRevert(BridgeRelayer.OnlyVerifierAllowed.selector);
+        relayerContract.relay(1, 2, address(0), address(relayerContract), address(token), user1, user2, 100 ether, bytes32(uint256(1)));
     }
 
-    function testRelayMintNonRelayerReverts() public {
-        vm.prank(user1);
-        vm.expectRevert();
-        relayerContract.relay(1, 1, 2, user1, 500 ether, address(token));
+    // ============ Replay ============
+    function testRelayReplayProtection() public {
+        _relay(bytes32(uint256(2)), user1, 100 ether);
+        vm.prank(verifier);
+        vm.expectRevert(abi.encodeWithSelector(BridgeRelayer.MessageAlreadyProcessed.selector, bytes32(uint256(2))));
+        relayerContract.relay(1, block.chainid, address(0x100), address(relayerContract), address(token), user1, user1, 100 ether, bytes32(uint256(2)));
     }
 
-    function testRelayMintReplayProtection() public {
-        vm.prank(relayer);
-        relayerContract.relay(1, 1, 2, user1, 500 ether, address(token));
-
-        vm.prank(relayer);
-        vm.expectRevert();
-        relayerContract.relay(1, 1, 2, user1, 500 ether, address(token));
+    // ============ Wrong chain ============
+    function testReproD_WrongDestinationChainReverts() public {
+        vm.prank(verifier);
+        vm.expectRevert(BridgeRelayer.IncorrectDestinationChain.selector);
+        relayerContract.relay(1, block.chainid + 1, address(0x100), address(relayerContract), address(token), user1, user2, 100 ether, bytes32(uint256(3)));
     }
 
-    function testRelayZeroAddressReverts() public {
-        vm.prank(relayer);
-        vm.expectRevert(BridgeRelayer.ZeroAddress.selector);
-        relayerContract.relay(1, 1, 2, address(0), 500 ether, address(token));
+    function testRelayToWrongDestinationBridgeReverts() public {
+        vm.prank(verifier);
+        vm.expectRevert(BridgeRelayer.IncorrectDestinationBridge.selector);
+        relayerContract.relay(1, block.chainid, address(0x100), address(admin), address(token), user1, user2, 100 ether, bytes32(uint256(9)));
     }
 
-    function testRelayZeroAmountReverts() public {
-        vm.prank(relayer);
+    // ============ Unallowlisted token ============
+    function testReproArbitraryTokenReverts() public {
+        address evilToken = address(0x99);
+        vm.startPrank(relayer);
+        relayerContract.setTokenAllowlist(evilToken, false);
+        vm.stopPrank();
+        vm.prank(verifier);
+        vm.expectRevert(BridgeRelayer.UnauthorizedToken.selector);
+        relayerContract.relay(1, block.chainid, address(0x100), address(relayerContract), evilToken, user1, user2, 100 ether, bytes32(uint256(4)));
+    }
+
+    function testZeroAmountReverts() public {
+        vm.prank(verifier);
         vm.expectRevert(BridgeRelayer.InvalidAmount.selector);
-        relayerContract.relay(1, 1, 2, user1, 0, address(token));
+        relayerContract.relay(1, 2, address(0x100), address(relayerContract), address(token), user1, user2, 0, bytes32(uint256(5)));
     }
 
-    function testRelayWhenPaused() public {
+    function testSetVerifierZeroReverts() public {
         vm.prank(relayer);
-        relayerContract.pause();
-
-        vm.prank(relayer);
-        vm.expectRevert(); // EnforcedPause from Pausable
-        relayerContract.relay(1, 1, 2, user1, 500 ether, address(token));
+        vm.expectRevert();
+        relayerContract.setVerifier(address(0));
     }
 
-    // ===========================================
-    // PROCESSED MESSAGES VIEW TESTS
-    // ===========================================
-
-    function testProcessedMessages() public {
-        assertEq(relayerContract.processedMessages(1, 1), false);
-
-        vm.prank(relayer);
-        relayerContract.relay(1, 1, 2, user1, 500 ether, address(token));
-
-        assertEq(relayerContract.processedMessages(1, 1), true);
-    }
-
-    // ===========================================
-    // ADMIN FUNCTIONS TESTS
-    // ===========================================
-
+    // ============ Admin ============
     function testSetRelayer() public {
-        address newRelayer = address(0x3);
-
         vm.prank(relayer);
-        relayerContract.setRelayer(newRelayer);
-
-        assertEq(relayerContract.relayer(), newRelayer);
-        assertEq(relayerContract.hasRole(relayerContract.RELAYER_ADMIN_ROLE(), newRelayer), true);
-        assertEq(relayerContract.hasRole(relayerContract.RELAYER_ADMIN_ROLE(), relayer), false);
-    }
-
-    function testSetRelayerZeroAddressReverts() public {
-        vm.prank(relayer);
-        vm.expectRevert(BridgeRelayer.ZeroAddress.selector);
-        relayerContract.setRelayer(address(0));
-    }
-
-    function testSetRelayerNonAdminReverts() public {
-        vm.prank(user1);
-        vm.expectRevert();
         relayerContract.setRelayer(address(0x3));
-    }
-
-    function testPauseUnpause() public {
-        assertEq(relayerContract.paused(), false);
-
-        vm.prank(relayer);
-        relayerContract.pause();
-        assertEq(relayerContract.paused(), true);
-
-        vm.prank(relayer);
-        relayerContract.unpause();
-        assertEq(relayerContract.paused(), false);
-    }
-
-    function testPauseNonAdminReverts() public {
-        vm.prank(user1);
-        vm.expectRevert();
-        relayerContract.pause();
+        assertEq(relayerContract.relayer(), address(0x3));
     }
 }

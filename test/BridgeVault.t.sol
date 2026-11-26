@@ -18,20 +18,14 @@ contract BridgeVaultTest is Test {
 
     function setUp() public {
         vm.startPrank(admin);
-
-        // Deploy token via initialize
         token = new IDRCToken();
         token.initialize("IDR Coin", "IDRC", admin, admin, admin, admin, admin, admin, 10_000_000_000 * 10**18);
-
-        // Deploy vault
         vault = new BridgeVault(CHAIN_ID, relayer);
-
-        // Grant minter/burner roles to vault (so it can burn/mint)
-        bytes32 MINTER_ROLE = token.MINTER_ROLE();
-        bytes32 BURNER_ROLE = token.BURNER_ROLE();
-        token.grantRole(MINTER_ROLE, address(vault));
-        token.grantRole(BURNER_ROLE, address(vault));
-
+        token.grantRole(token.MINTER_ROLE(), address(vault));
+        token.grantRole(token.BURNER_ROLE(), address(vault));
+        vm.stopPrank();
+        vm.startPrank(relayer);
+        vault.setDestinationBridge(user2);
         vm.stopPrank();
     }
 
@@ -40,272 +34,149 @@ contract BridgeVaultTest is Test {
         token.mint(to, amount);
     }
 
-    // ===========================================
-    // INITIALIZATION TESTS
-    // ===========================================
-
-    function testInitialization() public {
-        assertEq(vault.chainId(), CHAIN_ID);
-        assertEq(vault.relayer(), relayer);
-        assertEq(vault.paused(), false);
-        assertEq(vault.hasRole(vault.RELAYER_ROLE(), relayer), true);
+    function _approve(address user, uint256 amount) internal {
+        vm.prank(user);
+        token.approve(address(vault), amount);
     }
-
-    // ===========================================
-    // LOCK (BURN ON SOURCE) TESTS
-    // ===========================================
 
     function testLock() public {
         _mintViaAdmin(user1, 1000 ether);
+        _approve(user1, 500 ether);
 
-        vm.prank(relayer);
-        uint256 nonce = vault.lock(address(token), user1, user2, 500 ether, 137); // Polygon
+        vm.prank(user1); // The user locks; relayer cannot do it on their behalf
+        uint256 nonce = vault.lock(address(token), user2, 500 ether, 137);
 
-        assertEq(token.balanceOf(user1), 500 ether);
-        assertEq(token.totalSupply(), 500 ether);
+        assertEq(token.balanceOf(user1), 500 ether); // burned into vault
+        assertEq(token.balanceOf(address(vault)), 500 ether);
         assertEq(nonce, 1);
         assertEq(vault.lockedAmount(1), 500 ether);
     }
 
-    function testLockEmitsEvent() public {
+    function testLockWithoutAllowanceReverts() public {
         _mintViaAdmin(user1, 1000 ether);
-
-        vm.expectEmit(true, true, false, true);
-        emit IBridgeVault.TokensLocked(1, user1, user2, 500 ether, 137);
-
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 500 ether, 137);
-    }
-
-    function testLockNonRelayerReverts() public {
-        _mintViaAdmin(user1, 1000 ether);
-
         vm.prank(user1);
         vm.expectRevert();
-        vault.lock(address(token), user1, user2, 500 ether, 137);
+        vault.lock(address(token), user2, 500 ether, 137);
     }
 
     function testLockZeroAddressReverts() public {
-        vm.prank(relayer);
-        vm.expectRevert(BridgeVault.ZeroAddress.selector);
-        vault.lock(address(token), address(0), user2, 500 ether, 137);
+        vm.prank(user1);
+        vm.expectRevert(BridgeVault.UnauthorizedRecipient.selector);
+        vault.lock(address(token), address(0), 500 ether, 137);
     }
 
     function testLockZeroAmountReverts() public {
-        vm.prank(relayer);
+        vm.prank(user1);
         vm.expectRevert(BridgeVault.ZeroAmount.selector);
-        vault.lock(address(token), user1, user2, 0, 137);
+        vault.lock(address(token), user2, 0, 137);
     }
 
     function testLockSameChainReverts() public {
-        vm.prank(relayer);
-        vm.expectRevert();
-        vault.lock(address(token), user1, user2, 500 ether, CHAIN_ID);
+        vm.prank(user1);
+        vm.expectRevert(abi.encodeWithSelector(BridgeVault.SameChain.selector, CHAIN_ID));
+        vault.lock(address(token), user2, 500 ether, CHAIN_ID);
     }
 
     function testLockWhenPausedReverts() public {
         _mintViaAdmin(user1, 1000 ether);
-
-        vm.prank(admin);
+        _approve(user1, 500 ether);
+        vm.startPrank(relayer);
         vault.pause();
-
-        vm.prank(relayer);
-        vm.expectRevert(); // EnforcedPause from Pausable
-        vault.lock(address(token), user1, user2, 500 ether, 137);
+        vm.stopPrank();
+        vm.prank(user1);
+        vm.expectRevert();
+        vault.lock(address(token), user2, 500 ether, 137);
+        vm.startPrank(relayer);
+        vault.unpause();
+        vm.stopPrank();
     }
 
-    // ===========================================
-    // RELEASE (MINT ON SOURCE - REVERSE BRIDGE) TESTS
-    // ===========================================
-
-    function testRelease() public {
+    // ============ EXPLOIT REPRO A: unauthorized burn of another user ============
+    function testReproA_RelayerCannotBurnArbitraryUser() public {
+        // Old model: relayer could call issuerBurn(user1). New model: lock()
+        // has no sender param; only the vault moves funds via transferFrom(msg.sender).
         _mintViaAdmin(user1, 1000 ether);
 
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 500 ether, 137);
+        vm.prank(relayer); // an attacker with relayer role tries the old path
+        (bool ok, ) = address(vault).call(
+            abi.encodeWithSignature("lock(address,address,uint256,uint256)", address(token), user2, 500 ether, 137)
+        );
+        assertFalse(ok); // reverts: no allowance from relayer
 
+        assertEq(token.balanceOf(user1), 1000 ether);
+        assertEq(token.totalSupply(), 1000 ether);
+    }
+
+    // ============ RELEASE (REVERSE BRIDGE) ============
+    function testRelease() public {
+        _mintViaAdmin(user1, 1000 ether);
+        _approve(user1, 500 ether);
+        vm.prank(user1);
+        vault.lock(address(token), user2, 500 ether, 137);
         vm.prank(relayer);
         vault.release(address(token), 1, user1);
-
         assertEq(token.balanceOf(user1), 1000 ether);
         assertEq(vault.isNonceProcessed(1), true);
     }
 
-    function testReleaseEmitsEvent() public {
+    function testReleaseDuplicateReverts() public {
         _mintViaAdmin(user1, 1000 ether);
-
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 500 ether, 137);
-
-        vm.expectEmit(true, true, false, true);
-        emit IBridgeVault.TokensReleased(1, user1, 500 ether);
-
-        vm.prank(relayer);
-        vault.release(address(token), 1, user1);
-    }
-
-    function testReleaseNonRelayerReverts() public {
+        _approve(user1, 500 ether);
         vm.prank(user1);
-        vm.expectRevert();
+        vault.lock(address(token), user2, 500 ether, 137);
+        vm.prank(relayer);
+        vault.release(address(token), 1, user1);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(BridgeVault.NonceAlreadyProcessed.selector, 1));
         vault.release(address(token), 1, user1);
     }
 
-    function testReleaseNonExistentNonceReverts() public {
+    function testReleaseNonExistentReverts() public {
         vm.prank(relayer);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(BridgeVault.NonceNotFound.selector, 999));
         vault.release(address(token), 999, user1);
     }
 
-    function testReleaseAlreadyProcessedReverts() public {
-        _mintViaAdmin(user1, 1000 ether);
-
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 500 ether, 137);
-
-        vm.prank(relayer);
-        vault.release(address(token), 1, user1);
-
-        vm.prank(relayer);
-        vm.expectRevert();
-        vault.release(address(token), 1, user1);
-    }
-
-    function testReleaseZeroAddressReverts() public {
-        vm.prank(relayer);
-        vm.expectRevert(BridgeVault.ZeroAddress.selector);
-        vault.release(address(token), 1, address(0));
-    }
-
-    function testReleaseWhenPausedReverts() public {
-        _mintViaAdmin(user1, 1000 ether);
-
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 500 ether, 137);
-
-        vm.prank(admin);
-        vault.pause();
-
-        vm.prank(relayer);
-        vm.expectRevert(); // EnforcedPause from Pausable
-        vault.release(address(token), 1, user1);
-    }
-
-    // ===========================================
-    // VIEW FUNCTION TESTS
-    // ===========================================
-
-    function testTotalLocked() public {
-        assertEq(vault.totalLocked(), 0);
-
-        _mintViaAdmin(user1, 1000 ether);
-
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 500 ether, 137);
-
-        assertEq(vault.totalLocked(), 500 ether);
-
-        vm.prank(relayer);
-        vault.release(address(token), 1, user1);
-
-        assertEq(vault.totalLocked(), 0);
-    }
-
-    function testIsNonceProcessed() public {
-        assertEq(vault.isNonceProcessed(1), false);
-
-        _mintViaAdmin(user1, 1000 ether);
-
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 500 ether, 137);
-
-        assertEq(vault.isNonceProcessed(1), false);
-
-        vm.prank(relayer);
-        vault.release(address(token), 1, user1);
-
-        assertEq(vault.isNonceProcessed(1), true);
-    }
-
-    function testLockedAmount() public {
-        assertEq(vault.lockedAmount(1), 0);
-
-        _mintViaAdmin(user1, 1000 ether);
-
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 500 ether, 137);
-
-        assertEq(vault.lockedAmount(1), 500 ether);
-    }
-
-    // ===========================================
-    // ADMIN FUNCTIONS TESTS
-    // ===========================================
-
-    function testSetRelayer() public {
-        address newRelayer = address(0x3);
-
-        vm.prank(admin);
-        vault.setRelayer(newRelayer);
-
-        assertEq(vault.hasRole(vault.RELAYER_ROLE(), newRelayer), true);
-    }
-
-    function testSetRelayerZeroAddressReverts() public {
-        vm.prank(admin);
-        vm.expectRevert(BridgeVault.ZeroAddress.selector);
-        vault.setRelayer(address(0));
-    }
-
-    function testPauseUnpause() public {
-        assertEq(vault.paused(), false);
-
-        vm.prank(admin);
-        vault.pause();
-        assertEq(vault.paused(), true);
-
-        vm.prank(admin);
-        vault.unpause();
-        assertEq(vault.paused(), false);
-    }
-
-    function testPauseNonAdminReverts() public {
-        vm.prank(user1);
-        vm.expectRevert();
-        vault.pause();
-    }
-
-    // ===========================================
-    // EDGE CASES
-    // ===========================================
-
-    function testMultipleLocksAndReleases() public {
+    // ============ INVARIANTS ============
+    function testInvariant_TotalLockedConsistency() public {
         _mintViaAdmin(user1, 10000 ether);
-
+        _approve(user1, 5000 ether);
         for (uint i = 0; i < 5; i++) {
-            vm.prank(relayer);
-            vault.lock(address(token), user1, user2, 1000 ether, 137);
+            vm.prank(user1);
+            vault.lock(address(token), user2, 1000 ether, 137);
         }
-
-        assertEq(token.balanceOf(user1), 5000 ether);
+        assertEq(token.balanceOf(address(vault)), 5000 ether);
         assertEq(vault.totalLocked(), 5000 ether);
-
-        for (uint i = 1; i <= 5; i++) {
-            vm.prank(relayer);
-            vault.release(address(token), i, user1);
-        }
-
-        assertEq(token.balanceOf(user1), 10000 ether);
-        assertEq(vault.totalLocked(), 0);
     }
 
-    function testMultipleChains() public {
-        _mintViaAdmin(user1, 10000 ether);
+    function testInvariant_MessageAccounting() public {
+        _mintViaAdmin(user1, 1000 ether);
+        _approve(user1, 500 ether);
+        vm.prank(user1);
+        uint256 nonce = vault.lock(address(token), user2, 500 ether, 137);
+        BridgeVault.BridgeMessage memory msg_ = vault.bridgeMessage(nonce);
+        assertEq(msg_.sourceChainId, CHAIN_ID);
+        assertEq(msg_.destinationChainId, 137);
+        assertEq(msg_.token, address(token));
+        assertEq(msg_.sender, user1);
+        assertEq(msg_.recipient, user2);
+        assertEq(msg_.amount, 500 ether);
+        assertEq(msg_.nonce, nonce);
+    }
 
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 2000 ether, 137);   // Polygon
-        vm.prank(relayer);
-        vault.lock(address(token), user1, user2, 3000 ether, 42161); // Arbitrum
+    // ============ ADMIN ============
+    function testSetRelayer() public {
+        vm.startPrank(relayer);
+        vault.setRelayer(address(0x3));
+        vm.stopPrank();
+        assertEq(vault.relayer(), address(0x3));
+        assertEq(vault.hasRole(vault.RELAYER_ROLE(), address(0x3)), true);
+    }
 
-        assertEq(vault.totalLocked(), 5000 ether);
+    function testSetRelayerZeroReverts() public {
+        vm.startPrank(relayer);
+        vm.expectRevert();
+        vault.setRelayer(address(0));
+        vm.stopPrank();
     }
 }

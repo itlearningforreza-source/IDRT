@@ -314,13 +314,13 @@
 |-------|-------|
 | **Category** | CODE |
 | **Severity** | Low |
-| **Component** | contracts/reserve/ProofOfReserve.sol (1e18), contracts/token/IDRCToken.sol (10_000_000_000 * 10**18) |
-| **Description** | Literal constants without named definitions or comments. |
+| **Component** | contracts/reserve/ProofOfReserve.sol (1e18, fixed in 2026-11-24), contracts/token/IDRCToken.sol (10_000_000_000 * 10**18) |
+| **Description** | Literal constants without named definitions or comments. PoR magic numbers (ratio precision, timestamp tolerance, overflow guard) now named constants. |
 | **Impact** | Reduced readability; risk of typos; harder maintenance |
 | **Remediation** | Named constants with comments |
-| **Effort** | 2 hours |
+| **Effort** | 2 hours (PoR done; IDRCToken remaining) |
 | **Blocker** | None |
-| **Status** | Open |
+| **Status** | Done (ProofOfReserve only) |
 
 ### DEBT-024: BridgeVault Immutable Relayer Misleading (CODE)
 | Field | Value |
